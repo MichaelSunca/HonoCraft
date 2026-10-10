@@ -32,8 +32,8 @@
 Task 1: 基座、配置/契约校验已实现；单元测试覆盖配置、契约、权限策略与加密工具。
 Task 2: SQL 迁移、事务预算与真实 PG 约束测试已实现；Drizzle schema 映射及升级完整验证待补。
 Task 3: in progress — 权限策略已实现，正在接入统一写入口、审计、幂等及限流。
-Task 4: 加密 outbox、模板、投递前复核、租约/CAS/重试及 SMTP 已实现；常驻循环、心跳、通知发送限流和清理待实现。
-Task 5: 会话、Argon2 密码、登录、HTTP Cookie/Origin/CSRF、本人资料与退出已实现；初始化服务、完成接口、Web 进程和密钥加载已实现；初始化 CLI/页面、近期验证及会话管理 API 待实现。
+Task 4: 加密 outbox、模板、投递前复核、租约/CAS/重试及 SMTP 已实现；常驻循环、心跳及通知发送限流已实现；到期对象、媒体与留存清理待实现。
+Task 5: 会话、Argon2 密码、登录、HTTP Cookie/Origin/CSRF、本人资料与退出已实现；初始化服务、完成接口、Web 进程和密钥加载已实现；初始化 CLI 已实现；初始化页面、近期验证及会话管理 API 待实现。
 Task 6–12: pending（README 已补，完整交付未完成）。
 
 ## 2026-10-10 continuation evidence
@@ -72,3 +72,15 @@ Task 6–12: pending（README 已补，完整交付未完成）。
 - Web 实际子进程 RED 4 项失败 → 4/4 通过，覆盖秘密加载、受限账号启动、初始化门禁、拒绝旧库/目录差异，以及 SIGTERM 后关闭数据库连接。已提供 start:web 与 dev:server，暂用 tsx 源码执行；最终编译入口、前端/Worker/dev 组合启动仍待实现。
 - 本轮 `pnpm check` 通过；`pnpm test` 83/83。完整集成回归 123/123，通过 15 个文件，耗时约 51 秒。所有浏览器、Docker、恢复、性能与 37 项 P0 全量验收仍未完成。
 - 临时运行约定：当前 .env.example 显式禁用 example notes，与已交付数据库目录一致；保留配置层开发默认 true 的最终设计，后续补显式模块目录迁移。启动不得为通过测试而静默改写数据库模块状态。
+
+
+## 2026-10-10 worker and local initialization command
+
+- 通知配额真实 SMTP RED：7 个同地址通知全部发出，2 项行为测试失败。实现 0004 受限函数后只允许 5 个，剩余任务保持 queued/密文、attempts 退回，下一窗口继续；不同地址独立。Worker 未获 rate_limit_buckets 通用 DML 权限。
+- 补充 SQL NULL 租约版本测试先收到 send；将比较改为 IS DISTINCT FROM 后拒绝空/旧版本，且不扣配额。新迁移未提交前修正，不改既有已发布迁移。
+- Worker 常驻入口与每秒轮询已实现，两个并发槽、30 秒心跳、启动及每分钟租约回收、SIGTERM 排空且不继续领取。真实 SMTP held fixture 阻塞受理，验证两条 Sending / 两条 Queued、退出后剩余任务由新进程完成。
+- Worker 测试首次出现一次短时观察超时与陈旧租约未回收；添加安全时间诊断后未复现。测试等待改用单调时钟，旧进程夹具租约明确过期 5 分钟，连续三次 4/4 通过。未据此声称已证明最初失败原因；常规租约边界仍由 outbox 集成测试覆盖。
+- 初始化服务新规则 RED 3 失败/6 通过 → 9/9：已完成时无副作用报告 initialized；重发按当前 60–3600 秒冷却、地址用途 1–5/h、本机来源 1–20/h 同事务扣减。拒绝重发不撤销旧凭证、不递增版本、不留新任务。
+- ops:init 已支持 email/resend/cancel+reason、参数互斥、结构化安全结果及退出码。初始 CLI 测试有参数矩阵展开与根工作区契约包解析错误；修正矩阵、将组装放到 server 工作区后 8/8 真实子进程测试通过，包括实际凭证完成后的重复初始化。
+- start:worker、dev:worker 与 ops:init 脚本已提供，README 和本地运行说明已同步；入口仍用 tsx 源码执行，编译/镜像/完整 dev 命令待交付。
+- 本轮完整回归：`pnpm check` 通过，83/83 单元测试、141/141 集成测试（18 文件，约 77 秒）通过；仍不能声称完整 P0、浏览器、Docker、恢复或性能验收通过。

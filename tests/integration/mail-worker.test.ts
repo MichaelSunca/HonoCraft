@@ -23,7 +23,7 @@ async function pendingMail(){
   const [lease]=await claimTasks(database.pool,randomUUID(),1);
   return {user,credentialId:id,task,lease:lease!,token:token.token};
 }
-const deliver=(lease:Awaited<ReturnType<typeof pendingMail>>['lease'],ring=keyring)=>runDelivery(database.pool,{origin:'https://app.example.test',epoch:'test-epoch',keyring:ring},transport(),lease);
+const deliver=(lease:Awaited<ReturnType<typeof pendingMail>>['lease'],ring=keyring)=>runDelivery(database.pool,{origin:'https://app.example.test',epoch:'test-epoch',digestKey:Buffer.alloc(32,7),keyring:ring},transport(),lease);
 describe('mail worker delivery qualification',()=>{
   it('decrypts and sends an eligible credential without consuming it',async()=>{
     const pending=await pendingMail();expect(await deliver(pending.lease)).toBe('sent');expect(smtp.messages).toHaveLength(1);
@@ -50,7 +50,7 @@ describe('mail worker delivery qualification',()=>{
   });
   it('discards an acknowledgement after cancellation wins the race',async()=>{
     const pending=await pendingMail();const real=transport();
-    const outcome=await runDelivery(database.pool,{origin:'https://app.example.test',epoch:'test-epoch',keyring},{send:async message=>{
+    const outcome=await runDelivery(database.pool,{origin:'https://app.example.test',epoch:'test-epoch',digestKey:Buffer.alloc(32,7),keyring},{send:async message=>{
       const sent=await real.send(message);
       await database.pool.query(`UPDATE email_tasks SET status='cancelled',lease_version=lease_version+1,lease_owner=NULL,lease_expires_at=NULL,
         recipient=NULL,payload_ciphertext=NULL,nonce=NULL,auth_tag=NULL,key_id=NULL WHERE id=$1`,[pending.task]);

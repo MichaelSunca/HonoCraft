@@ -25,7 +25,7 @@ export async function initializeBootstrap(pool:Pool,secrets:BootstrapSecrets,raw
   const input=parsed.data;const normalized=normalizeEmail(input.email);const meta=requestMetaSchema.parse(metadata);
   return withTransaction(pool,'exclusive',async tx=>{
     const state=(await tx.query<{initialization_status:string;bootstrap_user_id:string|null;bootstrap_version:number}>('SELECT initialization_status,bootstrap_user_id,bootstrap_version FROM system_state WHERE id=1')).rows[0]!;
-    if(state.initialization_status==='initialized')throw new AppError('BOOTSTRAP_CLOSED');
+    if(state.initialization_status==='initialized')return {status:'initialized' as const,mail_queued:false,operation_id:meta.requestId};
     let userId=state.bootstrap_user_id;let version=state.bootstrap_version;
     if(state.initialization_status==='pending') {
       const user=(await tx.query<{normalized_email:string;status:string;creation_source:string}>('SELECT normalized_email,status,creation_source FROM users WHERE id=$1 FOR UPDATE',[userId])).rows[0];
@@ -39,6 +39,14 @@ export async function initializeBootstrap(pool:Pool,secrets:BootstrapSecrets,raw
       await tx.query(`INSERT INTO users(id,email,normalized_email,display_name,creation_source) VALUES ($1,$2,$3,'Administrator','bootstrap')`,[userId,input.email,normalized]);
       await tx.query("UPDATE system_state SET initialization_status='pending',bootstrap_user_id=$1 WHERE id=1",[userId]);
     }
+    const settings=(await tx.query<{typed_value:unknown}>("SELECT typed_value FROM system_settings WHERE key='security'")).rows[0]?.typed_value;
+    const policy=z.object({mail_cooldown_seconds:z.number().int().min(60).max(3600),mail_target_per_hour:z.number().int().min(1).max(5),mail_ip_per_hour:z.number().int().min(1).max(20)}).safeParse(settings);
+    if(!policy.success)throw new AppError('DEPENDENCY_UNAVAILABLE');
+    const quota=await consumeLimits(tx,secrets.digestKey,[
+      {scope:'mail.bootstrap.target',identifier:normalized,limit:policy.data.mail_target_per_hour,windowMs:3_600_000,bucketMs:60_000,cooldownMs:policy.data.mail_cooldown_seconds*1000},
+      {scope:'mail.operator.ip',identifier:meta.ip,limit:policy.data.mail_ip_per_hour,windowMs:3_600_000,bucketMs:60_000},
+    ]);
+    if(!quota.allowed)throw new AppError('RATE_LIMITED',{},quota.retryAfter);
     const replaced=(await tx.query<{id:string}>(`UPDATE one_time_credentials SET revoked_at=clock_timestamp()
       WHERE user_id=$1 AND purpose='bootstrap' AND consumed_at IS NULL AND revoked_at IS NULL RETURNING id`,[userId])).rows.map(row=>row.id);
     const token=issueToken();const credentialId=randomUUID();const now=await databaseNow(tx);const expiresAt=new Date(now.getTime()+30*60_000);

@@ -1,7 +1,7 @@
 import {createServer,type Socket,type AddressInfo} from 'node:net';
 import {setTimeout as delay} from 'node:timers/promises';
-export async function startSmtpFixture(mode:'accept'|'reject'|'temporary'|'silent'|'unknown'='accept') {
-  const connections=new Set<Socket>();const messages:string[]=[];
+export async function startSmtpFixture(mode:'accept'|'reject'|'temporary'|'silent'|'unknown'|'held'='accept') {
+  const connections=new Set<Socket>();const messages:string[]=[];const awaitingAcceptance=new Set<Socket>();let hold=mode==='held';
   const server=createServer(socket=>{
     connections.add(socket);socket.once('close',()=>connections.delete(socket));socket.on('error',()=>{});
     if(mode!=='silent')socket.write('220 localhost test SMTP\r\n');
@@ -14,7 +14,7 @@ export async function startSmtpFixture(mode:'accept'|'reject'|'temporary'|'silen
         if(receiving){
           if(line==='.'){
             receiving=false;messages.push(message);message='';
-            if(mode!=='unknown')socket.write('250 accepted\r\n');
+            if(hold)awaitingAcceptance.add(socket);else if(mode!=='unknown')socket.write('250 accepted\r\n');
           }else message+=line+'\r\n';
         }else if(/^EHLO|^HELO/.test(line))socket.write('250-localhost\r\n250 PIPELINING\r\n');
         else if(/^MAIL FROM/.test(line))socket.write('250 sender accepted\r\n');
@@ -28,6 +28,7 @@ export async function startSmtpFixture(mode:'accept'|'reject'|'temporary'|'silen
   });
   await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));
   return {port:(server.address() as AddressInfo).port,messages,
+    release(){hold=false;for(const socket of awaitingAcceptance){if(!socket.destroyed)socket.write('250 accepted\r\n');}awaitingAcceptance.clear();},
     async waitForDisconnect(){const deadline=Date.now()+2000;while(connections.size&&Date.now()<deadline)await delay(10);return connections.size===0;},
     async close(){for(const socket of connections)socket.destroy();await new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve()));},
   };

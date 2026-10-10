@@ -1,12 +1,13 @@
 import type {Pool} from 'pg';
+import {normalizeEmail} from '@honocraft/contracts/common';
 import {withTransaction} from '../../infrastructure/db.js';
-import {decryptPayload,type Keyring} from '../../infrastructure/crypto.js';
+import {decryptPayload,keyedDigest,type Keyring} from '../../infrastructure/crypto.js';
 import {currentCredential} from '../auth/credentials.js';
 import {mailPayloadSchema,renderMail,type MailPayload} from './templates.js';
 import {mailAad,readClaimedTask,finishTask,type MailLease,type DeliveryOutcome} from './outbox.js';
 import type {MailTransport} from './smtp.js';
 export type DeliveryResult='sent'|'queued'|'failed'|'cancelled'|'lease_lost';
-export async function runDelivery(pool:Pool,config:{origin:string;epoch:string;keyring:Keyring},transport:MailTransport,lease:MailLease):Promise<DeliveryResult> {
+export async function runDelivery(pool:Pool,config:{origin:string;epoch:string;keyring:Keyring;digestKey:Buffer},transport:MailTransport,lease:MailLease):Promise<DeliveryResult> {
   const task=await readClaimedTask(pool,lease);if(!task)return 'lease_lost';
   const complete=async(outcome:DeliveryOutcome):Promise<DeliveryResult>=>{
     if(!await finishTask(pool,lease,outcome))return 'lease_lost';
@@ -25,6 +26,13 @@ export async function runDelivery(pool:Pool,config:{origin:string;epoch:string;k
   }
   let rendered:ReturnType<typeof renderMail>;
   try{rendered=renderMail(config.origin,payload);}catch{return complete({kind:'failed',code:'PAYLOAD_INVALID'});}
+  if(!('token' in payload)){
+    const digest=keyedDigest(config.digestKey,'honocraft.notification.delivery.v1',normalizeEmail(payload.recipient));
+    const decision=await withTransaction(pool,'independent',async tx=>(await tx.query<{decision:string}>(
+      'SELECT reserve_notification_delivery($1,$2,$3,$4) AS decision',[lease.id,lease.leaseOwner,lease.leaseVersion,digest])).rows[0]?.decision);
+    if(decision==='queued'||decision==='lease_lost')return decision;
+    if(decision!=='send')throw new Error('NOTIFICATION_LIMIT_UNAVAILABLE');
+  }
   if(!await readClaimedTask(pool,lease))return 'lease_lost';
   // All DB transactions have finished. SMTP must never hold authority or task locks.
   let outcome:DeliveryOutcome;

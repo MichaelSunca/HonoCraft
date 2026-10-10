@@ -40,7 +40,7 @@ describe('local bootstrap followed by public one-time completion',()=>{
     await expect(initialize('different@example.test')).rejects.toMatchObject({code:'BOOTSTRAP_CLOSED'});
   });
   it('resends with a new version and invalidates the original link',async()=>{
-    await initialize();const old=await tokenFromMail();await initialize('admin@example.test',true);const replacement=await tokenFromMail();expect(replacement).not.toBe(old);
+    await initialize();const old=await tokenFromMail();await database.pool.query("UPDATE rate_limit_buckets SET last_accepted_at=clock_timestamp()-interval '61 seconds'");await initialize('admin@example.test',true);const replacement=await tokenFromMail();expect(replacement).not.toBe(old);
     await expect(complete(old)).rejects.toMatchObject({code:'CREDENTIAL_INVALID'});
     expect((await database.pool.query("SELECT status,recipient FROM email_tasks WHERE status='cancelled'")).rows).toEqual([{status:'cancelled',recipient:null}]);
     expect(await complete(replacement)).toEqual({initialized:true,login_required:true});
@@ -52,7 +52,8 @@ describe('local bootstrap followed by public one-time completion',()=>{
     const result=await createLoginService(web,secrets,passwords)({email:'admin@example.test',password},meta());
     const session=await authenticateRead(web,{token:result.token,epoch:secrets.epoch});expect(session.permissions.has('role:delegate')).toBe(true);
     await expect(complete(token)).rejects.toMatchObject({code:'CREDENTIAL_INVALID'});
-    await expect(initialize()).rejects.toMatchObject({code:'BOOTSTRAP_CLOSED'});
+    expect(await initialize('different-after-activation@example.test')).toMatchObject({status:'initialized',mail_queued:false});
+    expect((await database.pool.query('SELECT id FROM users')).rowCount).toBe(1);
     await expect(web.query("UPDATE system_state SET initialization_status='uninitialized',initialized_at=NULL")).rejects.toMatchObject({code:'42501'});
   });
   it('cancels only an unfinished bootstrap and allows a different email to start again',async()=>{
@@ -63,6 +64,23 @@ describe('local bootstrap followed by public one-time completion',()=>{
     await expect(complete(old)).rejects.toMatchObject({code:'CREDENTIAL_INVALID'});
     await initialize('replacement@example.test');await complete(await tokenFromMail());
     await expect(cancelBootstrap(database.pool,{reason:'Cannot undo activation'},meta())).rejects.toMatchObject({code:'BOOTSTRAP_CLOSED'});
+  });
+  it('protects operator resend with cooldown without invalidating the last accepted credential',async()=>{
+    await initialize();const token=await tokenFromMail();
+    await expect(initialize('admin@example.test',true)).rejects.toMatchObject({code:'RATE_LIMITED'});
+    expect(await tokenFromMail()).toBe(token);
+    expect((await database.pool.query('SELECT bootstrap_version FROM system_state')).rows[0].bootstrap_version).toBe(1);
+    expect((await database.pool.query('SELECT id FROM email_tasks')).rowCount).toBe(1);
+  });
+  it('enforces the rolling hourly operator target quota even after cooldown has elapsed',async()=>{
+    await initialize();
+    for(let i=0;i<4;i++){
+      await database.pool.query("UPDATE rate_limit_buckets SET last_accepted_at=clock_timestamp()-interval '61 seconds'");
+      await initialize('admin@example.test',true);
+    }
+    await database.pool.query("UPDATE rate_limit_buckets SET last_accepted_at=clock_timestamp()-interval '61 seconds'");
+    await expect(initialize('admin@example.test',true)).rejects.toMatchObject({code:'RATE_LIMITED'});
+    expect((await database.pool.query('SELECT id FROM email_tasks')).rowCount).toBe(5);
   });
   it('allows only one concurrent completion to consume the bootstrap credential',async()=>{
     await initialize();const token=await tokenFromMail();const results=await Promise.allSettled([complete(token),complete(token)]);
