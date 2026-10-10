@@ -1,0 +1,8 @@
+packages:
+  - apps/*
+  - packages/*
+onlyBuiltDependencies:
+  - "@embedded-postgres/linux-x64"
+  - argon2
+  - esbuild
+  - sharp
