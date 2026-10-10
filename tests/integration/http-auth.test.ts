@@ -100,4 +100,32 @@ describe('HTTP authentication and request security',()=>{
     }finally{await initializedDatabase(database.pool);}
   });
 
+  it('supports registration, verification and password recovery over the public HTTP routes',async()=>{
+    await database.pool.query("UPDATE system_settings SET typed_value=jsonb_set(typed_value,'{registration_open}','true') WHERE key='security'");
+    const account='public-http@example.test';
+    const issuedToken=async(purpose:string)=>{
+      const task=(await database.pool.query("SELECT * FROM email_tasks WHERE purpose=$1 AND recipient=$2 AND status='queued' ORDER BY created_at DESC LIMIT 1",[purpose,account])).rows[0];
+      return JSON.parse(decryptPayload(mailKeyring,{keyId:task.key_id,nonce:task.nonce,tag:task.auth_tag,ciphertext:task.payload_ciphertext},mailAad(task.id,task.purpose,task.template_version))).token;
+    };
+    const registration=await fetch(base+'/api/v1/auth/register',json({email:account,password,display_name:'Public user'}));
+    expect(registration.status).toBe(202);expect((await registration.json()).data).toEqual({accepted:true});expect(registration.headers.get('set-cookie')).toBeNull();
+    const pendingLogin=await fetch(base+'/api/v1/auth/login',json({email:account,password}));expect(pendingLogin.status).toBe(403);
+    const verification=await fetch(base+'/api/v1/auth/email/verify',json({token:await issuedToken('email_verify')}));
+    expect(verification.status).toBe(200);expect((await verification.json()).data).toEqual({verified:true,login_required:true});
+    const login=await fetch(base+'/api/v1/auth/login',json({email:account,password}));expect(login.status,JSON.stringify({response:await login.clone().json(),buckets:(await database.pool.query('SELECT scope,count,last_accepted_at,clock_timestamp() FROM rate_limit_buckets')).rows})).toBe(200);const ownCookie=login.headers.get('set-cookie')!.split(';')[0]!;
+    const forgotten=await fetch(base+'/api/v1/auth/password/forgot',json({email:account}));expect(forgotten.status).toBe(202);expect((await forgotten.json()).data).toEqual({accepted:true});
+    expect((await fetch(base+'/api/v1/me',{headers:{cookie:ownCookie}})).status).toBe(200);
+    const freshPassword='Public HTTP replacement passphrase';
+    const reset=await fetch(base+'/api/v1/auth/password/reset',json({token:await issuedToken('password_reset'),new_password:freshPassword},{cookie:ownCookie}));
+    expect(reset.status).toBe(200);expect((await reset.json()).data).toEqual({reset:true,login_required:true});expect(reset.headers.get('set-cookie')).toContain('Max-Age=0');
+    expect((await fetch(base+'/api/v1/me',{headers:{cookie:ownCookie}})).status).toBe(401);
+    expect((await fetch(base+'/api/v1/auth/login',json({email:account,password:freshPassword}))).status).toBe(200);
+  });
+  it('uses uniform resend responses and applies Origin and strict-body checks to public auth',async()=>{
+    const absent=await fetch(base+'/api/v1/auth/email/resend',json({email:'not-present@example.test'}));expect(absent.status,JSON.stringify({response:await absent.clone().json(),buckets:(await database.pool.query('SELECT scope,count,last_accepted_at,clock_timestamp() FROM rate_limit_buckets')).rows})).toBe(202);expect((await absent.json()).data).toEqual({accepted:true});
+    const forged=await fetch(base+'/api/v1/auth/password/forgot',json({email:'not-present@example.test'},{origin:'https://foreign.example.test'}));expect(forged.status).toBe(403);
+    const extra=await fetch(base+'/api/v1/auth/register',json({email:'not-present@example.test',password,display_name:'No',role_ids:['super_admin']}));expect(extra.status).toBe(422);
+    const get=await fetch(base+'/api/v1/auth/email/verify');expect(get.status).toBe(404);
+  });
+
 });

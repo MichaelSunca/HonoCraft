@@ -27,7 +27,7 @@ export async function consumeLimits(tx:Tx,key:Buffer,rules:readonly LimitRule[])
   for(const [index,rule] of prepared.entries()) {
     const state=states[index]!;
     const cooldownEnd=(state.last_accepted_at?.getTime()??0)+(rule.cooldownMs??0);
-    if(cooldownEnd>now.getTime())return {allowed:false,scope:rule.scope,retryAfter:Math.ceil((cooldownEnd-now.getTime())/1000)};
+    if((rule.cooldownMs??0)>0&&cooldownEnd>now.getTime())return {allowed:false,scope:rule.scope,retryAfter:Math.ceil((cooldownEnd-now.getTime())/1000)};
     const boundary=new Date(Math.floor((now.getTime()-rule.windowMs)/rule.bucketMs)*rule.bucketMs);
     const buckets=(await tx.query<{count:number;window_start:Date}>(`SELECT count,window_start FROM rate_limit_buckets
       WHERE scope=$1 AND key_digest=$2 AND window_start>=$3 AND window_start<>$4 ORDER BY window_start`,[rule.scope,rule.digest,boundary,sentinel])).rows;

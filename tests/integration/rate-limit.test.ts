@@ -44,6 +44,14 @@ describe('PostgreSQL shared rate limits',()=>{
     await database.pool.query("UPDATE rate_limit_buckets SET last_accepted_at=clock_timestamp()-interval '61 seconds' WHERE scope=$1",[scope]);
     expect((await take()).allowed).toBe(true);
   });
+  it('does not invent a cooldown for a source quota after a wall-clock correction',async()=>{
+    const scope=`source.${randomUUID()}`;const limited={...rule('source'),scope,limit:2};
+    const take=()=>withTransaction(database.pool,'independent',tx=>consumeLimits(tx,key,[limited]));
+    expect((await take()).allowed).toBe(true);
+    await database.pool.query("UPDATE rate_limit_buckets SET last_accepted_at=clock_timestamp()+interval '5 seconds' WHERE scope=$1",[scope]);
+    expect((await take()).allowed).toBe(true);
+    expect((await take()).allowed).toBe(false);
+  });
   it('counts the boundary bucket conservatively instead of resetting at the hour',async()=>{
     const scope=`rolling.${randomUUID()}`;const limited={...rule('address'),scope,limit:1};
     const take=()=>withTransaction(database.pool,'independent',tx=>consumeLimits(tx,key,[limited]));

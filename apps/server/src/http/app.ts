@@ -18,6 +18,7 @@ import {loadPublicSettings} from '../modules/settings/public.js';
 import type { DigestKey } from '../infrastructure/idempotency.js';
 import type { RequestMeta } from '../modules/audit/writer.js';
 import { createLoginService } from '../modules/auth/login.js';
+import {createPublicAuthService} from '../modules/auth/public-auth.js';
 import { logoutMutation } from '../modules/auth/logout.js';
 import { createMutationGateway } from '../modules/access/mutation-gateway.js';
 import { profileMutation } from '../modules/users/profile.js';
@@ -29,6 +30,7 @@ export type AppDependencies={pool:Pool;config:AppConfig;passwords:PasswordServic
 export function createHttpApp({pool,config,passwords,secrets}:AppDependencies) {
   const app=new Hono<HttpEnvironment>();
   const resolveIp=createClientIpResolver(config.trustedProxyCidrs);
+  const publicAuth=createPublicAuthService(pool,{epoch:secrets.epoch,digestKey:secrets.digestKey.key,mailKeyring:secrets.mailKeyring},passwords);
   const login=createLoginService(pool,{epoch:secrets.epoch,digestKey:secrets.digestKey.key},passwords);
   const mutate=createMutationGateway(pool,secrets,{'me.profile.update':profileMutation,'auth.logout':logoutMutation});
   const cookieOptions={path:'/',httpOnly:true,secure:config.secureCookies,sameSite:'Lax' as const};
@@ -81,6 +83,16 @@ export function createHttpApp({pool,config,passwords,secrets}:AppDependencies) {
       await parseJson(()=>c.req.json()),c.get('meta'),config.httpTimeoutMs-(performance.now()-c.get('startedAt')));
     return c.json({data,request_id:c.get('requestId')});
   });
+  for(const [path,action,status] of [
+    ['/register',publicAuth.register,202],['/email/resend',publicAuth.resend,202],['/email/verify',publicAuth.verify,200],
+    ['/password/forgot',publicAuth.forgot,202],['/password/reset',publicAuth.reset,200],
+  ] as const){
+    app.post(`/api/v1/auth${path}`,async c=>{
+      const data=await action(await parseJson(()=>c.req.json()),c.get('meta'),config.httpTimeoutMs-(performance.now()-c.get('startedAt')));
+      if(path==='/password/reset')deleteCookie(c,config.sessionCookieName,cookieOptions);
+      return c.json({data,request_id:c.get('requestId')},status);
+    });
+  }
   app.post('/api/v1/auth/login',async c=>{
     const input=await parseJson(()=>c.req.json());
     const result=await login(input,c.get('meta'),config.httpTimeoutMs-(performance.now()-c.get('startedAt')));

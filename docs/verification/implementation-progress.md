@@ -34,7 +34,8 @@ Task 2: SQL 迁移、事务预算与真实 PG 约束测试已实现；Drizzle sc
 Task 3: in progress — 权限策略已实现，正在接入统一写入口、审计、幂等及限流。
 Task 4: 加密 outbox、模板、投递前复核、租约/CAS/重试及 SMTP 已实现；常驻循环、心跳及通知发送限流已实现；到期对象、媒体与留存清理待实现。
 Task 5: 会话、Argon2 密码、登录、HTTP Cookie/Origin/CSRF、本人资料与退出已实现；初始化服务、完成接口、Web 进程和密钥加载已实现；初始化 CLI 已实现；初始化页面、近期验证及会话管理 API 待实现。
-Task 6–12: pending（README 已补，完整交付未完成）。
+Task 6: in progress — 注册、验证/重发、找回/重置密码服务及 HTTP 已实现；邀请、邮箱变更、账号状态管理等未完成。
+Task 7–12: pending（README 已补，完整交付未完成）。
 
 ## 2026-10-10 continuation evidence
 
@@ -84,3 +85,14 @@ Task 6–12: pending（README 已补，完整交付未完成）。
 - ops:init 已支持 email/resend/cancel+reason、参数互斥、结构化安全结果及退出码。初始 CLI 测试有参数矩阵展开与根工作区契约包解析错误；修正矩阵、将组装放到 server 工作区后 8/8 真实子进程测试通过，包括实际凭证完成后的重复初始化。
 - start:worker、dev:worker 与 ops:init 脚本已提供，README 和本地运行说明已同步；入口仍用 tsx 源码执行，编译/镜像/完整 dev 命令待交付。
 - 本轮完整回归：`pnpm check` 通过，83/83 单元测试、141/141 集成测试（18 文件，约 77 秒）通过；仍不能声称完整 P0、浏览器、Docker、恢复或性能验收通过。
+
+
+## 2026-10-11 public authentication lifecycle
+
+- 新增 public-auth 服务与五个 HTTP POST 路由：register、email/resend、email/verify、password/forgot、password/reset。匿名 API 始终使用统一 accepted，不返回 user_id/任务 ID/Token；邮箱特定抑制写入安全事件，源 IP 配额公开 429。
+- 注册在事务外完成 Argon2，事务内重查开关、密码策略及默认角色资格；保存 registration_role_id。并发同邮箱仅创建一个账号，重复注册不改旧密码。验证仅绑定原角色，并在有效邮箱变更请求存在时拒绝。
+- 找回仅为 Active/verified/本地密码账号签发，受理不撤销会话。重置事务重新检查用途/版本/邮箱/epoch/状态，消费当前凭证、撤销其他 reset/recovery 和全部会话，并与通知及审计原子提交；不激活禁用账号。
+- 数据库测试初始 17 失败/1 通过（无实现也能满足一个仅检查回滚的负向用例，不能单独证明该行为），实现后 18/18 通过。补充哈希期间关闭注册、挂起账号、并发 reset 后共 21/21 通过；哈希期间能由另一连接取得协调锁，证明没有在哈希期间持该锁。
+- HTTP 新用例先因路由缺失 404 失败，接入后覆盖注册→Pending 登录拒绝→验证→登录→找回→重置→旧会话失效→新密码登录；验证 Origin、严格正文、GET 无消费路由与成功后清 Cookie。
+- 一次 HTTP 验证出现意外 429；加响应及桶时间诊断后未复现。独立可重复测试确认 consumeLimits 对 cooldownMs=0 也应用 last_accepted_at 冷却：将 sentinel 时间设为未来 5 秒即错误拒绝未耗尽来源配额。修复为仅在明确配置正冷却时执行该判断；计数窗口和实际冷却不变。
+- 本轮 `pnpm check` 通过，83/83 单元测试、165/165 集成测试（19 个文件，约 87 秒）通过。前端、近期验证、本人改密、会话管理、邀请、邮箱变更、后台管理、维护及发布验收仍是完整 P0 的未完成部分。
