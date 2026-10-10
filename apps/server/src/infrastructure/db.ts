@@ -1,7 +1,7 @@
 import pg, { type Pool, type PoolClient, type QueryResult, type QueryResultRow } from 'pg';
 import { drizzle } from 'drizzle-orm/node-postgres';
 
-export type LockMode = 'shared' | 'exclusive' | 'read';
+export type LockMode = 'shared' | 'exclusive' | 'read' | 'independent';
 export type Tx = Readonly<{
   query<Row extends QueryResultRow = QueryResultRow>(text: string, values?: readonly unknown[]): Promise<QueryResult<Row>>;
 }>;
@@ -12,7 +12,9 @@ export function createDatabase(connectionString: string, max = 10) {
 }
 export type Database = ReturnType<typeof createDatabase>;
 
-/** No password hashing, SMTP, image conversion or other external work belongs inside this callback. */
+/** Independent mode is only for short session-read, rate-limit and failure-event transactions.
+ * Protected business writes must use shared or exclusive.
+ * No password hashing, SMTP, image conversion or other external work belongs inside this callback. */
 export async function withTransaction<T>(pool: Pool, mode: LockMode, handler: (tx: Tx) => Promise<T>): Promise<T> {
   const client: PoolClient = await pool.connect();
   let broken: Error | undefined;
@@ -21,7 +23,7 @@ export async function withTransaction<T>(pool: Pool, mode: LockMode, handler: (t
   try {
     await client.query(mode === 'read' ? 'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY' : 'BEGIN ISOLATION LEVEL READ COMMITTED');
     await client.query("SET LOCAL lock_timeout='2s'; SET LOCAL statement_timeout='5s'; SET LOCAL transaction_timeout='8s'; SET LOCAL idle_in_transaction_session_timeout='8s'");
-    if (mode !== 'read') {
+    if (mode === 'shared' || mode === 'exclusive') {
       const result = await client.query(`SELECT id FROM system_state WHERE id=1 FOR ${mode === 'shared' ? 'SHARE' : 'UPDATE'}`);
       if (result.rowCount !== 1) throw new Error('SYSTEM_STATE_MISSING');
     }

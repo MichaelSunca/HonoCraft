@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFile, readdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import type { Pool } from 'pg';
 
 export const DEFAULT_MIGRATION_DIRECTORY = fileURLToPath(new URL('../../../../db/migrations/', import.meta.url));
@@ -15,11 +16,15 @@ export async function migrate(pool: Pool, directory = DEFAULT_MIGRATION_DIRECTOR
     await client.query(`CREATE TABLE IF NOT EXISTS migration_history (name text PRIMARY KEY, checksum text NOT NULL, applied_at timestamptz NOT NULL DEFAULT clock_timestamp(), app_version text NOT NULL)`);
     const applied = (await client.query<{ name: string; checksum: string }>('SELECT name,checksum FROM migration_history ORDER BY name')).rows;
     if (applied.some(item => !filenames.includes(item.name))) throw new Error('MIGRATION_VERSION_UNSUPPORTED');
-    for (const name of filenames) {
-      const sql = await readFile(new URL(name, `file://${directory.endsWith('/') ? directory : `${directory}/`}`), 'utf8');
-      const checksum = createHash('sha256').update(sql).digest('hex');
-      const previous = applied.find(item => item.name === name);
-      if (previous) { if (previous.checksum !== checksum) throw new Error(`MIGRATION_CHECKSUM_MISMATCH: ${name}`); continue; }
+    if (applied.some((item, index) => item.name !== filenames[index])) throw new Error('MIGRATION_ORDER_MISMATCH');
+    const scripts = await Promise.all(filenames.map(async name => {
+      const sql = await readFile(join(directory, name), 'utf8');
+      return { name, sql, checksum: createHash('sha256').update(sql).digest('hex') };
+    }));
+    for (const [index, previous] of applied.entries()) {
+      if (previous.checksum !== scripts[index]?.checksum) throw new Error(`MIGRATION_CHECKSUM_MISMATCH: ${previous.name}`);
+    }
+    for (const { name, sql, checksum } of scripts.slice(applied.length)) {
       await client.query('BEGIN');
       try {
         await client.query("SET LOCAL statement_timeout='60s'");
