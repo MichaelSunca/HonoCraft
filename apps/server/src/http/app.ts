@@ -11,6 +11,10 @@ import { z } from 'zod';
 import { AppError } from '@honocraft/contracts/errors';
 import type { AppConfig } from '../infrastructure/config.js';
 import type { PasswordService } from '../infrastructure/passwords.js';
+import type { Keyring } from '../infrastructure/crypto.js';
+import {withTransaction} from '../infrastructure/db.js';
+import {completeBootstrap} from '../modules/auth/bootstrap.js';
+import {loadPublicSettings} from '../modules/settings/public.js';
 import type { DigestKey } from '../infrastructure/idempotency.js';
 import type { RequestMeta } from '../modules/audit/writer.js';
 import { createLoginService } from '../modules/auth/login.js';
@@ -21,7 +25,7 @@ import { getMe } from '../modules/users/me.js';
 import { createClientIpResolver } from './security.js';
 
 type HttpEnvironment={Variables:{requestId:string;meta:RequestMeta;startedAt:number}};
-export type AppDependencies={pool:Pool;config:AppConfig;passwords:PasswordService;secrets:{epoch:string;csrfKey:Buffer;digestKey:DigestKey}};
+export type AppDependencies={pool:Pool;config:AppConfig;passwords:PasswordService;secrets:{epoch:string;csrfKey:Buffer;digestKey:DigestKey;mailKeyring:Keyring}};
 export function createHttpApp({pool,config,passwords,secrets}:AppDependencies) {
   const app=new Hono<HttpEnvironment>();
   const resolveIp=createClientIpResolver(config.trustedProxyCidrs);
@@ -48,6 +52,13 @@ export function createHttpApp({pool,config,passwords,secrets}:AppDependencies) {
     await next();
   });
   app.use('/api/*',bodyLimit({maxSize:64*1024,onError:()=>{throw new AppError('PAYLOAD_TOO_LARGE');}}));
+  app.use('/api/*',async(c,next)=>{
+    if(!['/api/v1/public/settings','/api/v1/auth/bootstrap/complete'].includes(c.req.path)){
+      const state=(await pool.query<{initialization_status:string}>('SELECT initialization_status FROM system_state WHERE id=1')).rows[0];
+      if(state?.initialization_status!=='initialized')throw new AppError('SYSTEM_NOT_INITIALIZED');
+    }
+    await next();
+  });
   app.onError((error,c)=>{
     const safe=error instanceof AppError?error:new AppError('INTERNAL_ERROR');
     if(safe.retryAfter)c.header('Retry-After',String(safe.retryAfter));
@@ -60,6 +71,15 @@ export function createHttpApp({pool,config,passwords,secrets}:AppDependencies) {
     try{await pool.query('SELECT 1 FROM system_state WHERE id=1');}
     catch{throw new AppError('DEPENDENCY_UNAVAILABLE');}
     return c.json({data:{status:'ready'},request_id:c.get('requestId')});
+  });
+  app.get('/api/v1/public/settings',async c=>{
+    const data=await withTransaction(pool,'read',loadPublicSettings);
+    return c.json({data,request_id:c.get('requestId')});
+  });
+  app.post('/api/v1/auth/bootstrap/complete',async c=>{
+    const data=await completeBootstrap(pool,{epoch:secrets.epoch,digestKey:secrets.digestKey.key,mailKeyring:secrets.mailKeyring},passwords,
+      await parseJson(()=>c.req.json()),c.get('meta'),config.httpTimeoutMs-(performance.now()-c.get('startedAt')));
+    return c.json({data,request_id:c.get('requestId')});
   });
   app.post('/api/v1/auth/login',async c=>{
     const input=await parseJson(()=>c.req.json());

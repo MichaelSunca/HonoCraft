@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "source": "SecLists / xato-net 100000 common passwords",
+  "upstream_commit": "27c08068f849227f2fc1c8f7f00afae365957b96",
+  "source_url": "https://raw.githubusercontent.com/danielmiessler/SecLists/27c08068f849227f2fc1c8f7f00afae365957b96/Passwords/Common-Credentials/xato-net-10-million-passwords-100000.txt",
+  "file": "common-100000.txt",
+  "sha256": "1472aafa2561df5e3293aee252aee3ca660c12b399a283cf808bb01b39be388b",
+  "entries": 100000,
+  "license": "MIT",
+  "license_file": "LICENSE.SecLists",
+  "retrieved_at": "2026-10-10"
+}

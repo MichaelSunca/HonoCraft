@@ -1,4 +1,5 @@
 import type { Pool } from 'pg';
+import {loadPublicSettings} from '../settings/public.js';
 import { withTransaction } from '../../infrastructure/db.js';
 import { csrfForSession } from '../../infrastructure/crypto.js';
 import { authenticateLockedSession,locateSession, type SessionRef } from '../auth/sessions.js';
@@ -13,7 +14,7 @@ export async function getMe(pool:Pool,ref:SessionRef,csrfKey:Buffer) {
     const session=(await tx.query<{absolute_expires_at:Date}>('SELECT absolute_expires_at FROM sessions WHERE id=$1',[context.sessionId])).rows[0]!;
     const pending=(await tx.query(`SELECT id,version,new_email,expires_at FROM email_change_requests
       WHERE user_id=$1 AND status='pending' AND expires_at>$2`,[user.id,context.now])).rows[0]??null;
-    return {user,roles,permission_codes:[...context.permissions].sort(),csrf_token:csrfForSession(csrfKey,context.sessionId,ref.epoch),
+    return {user,roles,instance:await loadPublicSettings(tx),permission_codes:[...context.permissions].sort(),csrf_token:csrfForSession(csrfKey,context.sessionId,ref.epoch),
       session:{id:context.sessionId,reauthenticated_at:context.reauthenticatedAt,absolute_expires_at:session.absolute_expires_at},pending_email_change:pending};
   });
 }

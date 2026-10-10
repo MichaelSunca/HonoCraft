@@ -7,10 +7,14 @@ import { identity,initializedDatabase } from '../helpers/identity.js';
 import { migrate } from '../../apps/server/src/infrastructure/migrations.js';
 import { loadConfig } from '../../apps/server/src/infrastructure/config.js';
 import { createPasswordService } from '../../apps/server/src/infrastructure/passwords.js';
+import { initializeBootstrap } from '../../apps/server/src/modules/auth/bootstrap.js';
+import { decryptPayload } from '../../apps/server/src/infrastructure/crypto.js';
+import { mailAad } from '../../apps/server/src/modules/mail/outbox.js';
 import { startHttpServer } from '../../apps/server/src/http/app.js';
 let database:Awaited<ReturnType<typeof startTestPostgres>>;
 let server:ReturnType<typeof startHttpServer>;let base:string;let email:string;let userId:string;
-let cookie:string;let csrf:string;const origin='https://app.example.test';const password='A long secret passphrase 测试';
+let cookie:string;let csrf:string;const mailKeyring={activeKeyId:'v1',keys:new Map([['v1',Buffer.alloc(32,4)]])};
+const origin='https://app.example.test';const password='A long secret passphrase 测试';
 const json=(body:unknown,extra:Record<string,string>={})=>({method:'POST',headers:{'content-type':'application/json',origin,...extra},body:JSON.stringify(body)});
 beforeAll(async()=>{
   database=await startTestPostgres();await migrate(database.pool);await initializedDatabase(database.pool);
@@ -20,7 +24,7 @@ beforeAll(async()=>{
   const config=loadConfig({NODE_ENV:'production',PUBLIC_ORIGIN:origin,DATABASE_URL:database.connectionString,
     SMTP_HOST:'smtp.example.test',SMTP_PORT:'587',MAIL_MODE:'smtp',MAIL_FROM:'noreply@example.test',FILE_STORAGE_ROOT:'.local/media',
     MAIL_PAYLOAD_KEYRING_FILE:'.local/secrets/mail.json',DIGEST_KEY_FILE:'.local/secrets/digest',CSRF_KEY_FILE:'.local/secrets/csrf',CREDENTIAL_EPOCH_FILE:'.local/secrets/epoch'});
-  server=startHttpServer({pool:database.pool,config,passwords,secrets:{epoch:'test-epoch',csrfKey:Buffer.alloc(32,3),digestKey:{id:'test-v1',key:Buffer.alloc(32,7)}}},0);
+  server=startHttpServer({pool:database.pool,config,passwords,secrets:{mailKeyring,epoch:'test-epoch',csrfKey:Buffer.alloc(32,3),digestKey:{id:'test-v1',key:Buffer.alloc(32,7)}}},0);
   if(!server.listening)await new Promise<void>(resolve=>server.once('listening',resolve));
   base=`http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 });
@@ -40,7 +44,7 @@ describe('HTTP authentication and request security',()=>{
     const response=await fetch(base+'/api/v1/me',{headers:{cookie,'x-request-id':supplied}});
     expect(response.status).toBe(200);expect(response.headers.get('cache-control')).toBe('no-store');expect(response.headers.get('referrer-policy')).toBe('no-referrer');
     const body=await response.json();csrf=body.data.csrf_token;
-    expect(body.data.user).toMatchObject({id:userId,email,status:'active'});expect(csrf).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(body.data.instance).toMatchObject({instance_name:'HonoCraft'});expect(body.data.user).toMatchObject({id:userId,email,status:'active'});expect(csrf).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(body.request_id).not.toBe(supplied);expect(JSON.stringify(body)).not.toMatch(/password_hash|password_version|token_hash|credential_epoch/);
   });
   it('rejects missing or foreign origins for authenticated writes',async()=>{
@@ -81,4 +85,19 @@ describe('HTTP authentication and request security',()=>{
     expect((await fetch(base+'/api/v1/me',{headers:{cookie}})).status).toBe(401);
     const again=await fetch(base+'/api/v1/auth/logout',json({},{cookie}));expect(again.status).toBe(200);expect(again.headers.get('set-cookie')).toContain('Max-Age=0');
   });
+  it('exposes minimal public settings and permits bootstrap completion while other APIs are gated',async()=>{
+    await database.pool.query("UPDATE system_state SET initialization_status='uninitialized',initialized_at=NULL WHERE id=1");
+    try {
+      const settings=await fetch(base+'/api/v1/public/settings');expect(settings.status).toBe(200);
+      expect((await settings.json()).data).toMatchObject({initialized:false,registration_open:false,instance_name:'HonoCraft',password_min_length:15});
+      expect((await fetch(base+'/api/v1/auth/login',json({email,password}))).status).toBe(503);
+      await initializeBootstrap(database.pool,{mailKeyring,epoch:'test-epoch',digestKey:Buffer.alloc(32,7)},{email:'bootstrap-http@example.test'}, {requestId:randomUUID(),ip:'127.0.0.1',userAgent:'test'});
+      const task=(await database.pool.query("SELECT * FROM email_tasks WHERE purpose='bootstrap'")).rows[0];
+      const token=JSON.parse(decryptPayload(mailKeyring,{keyId:task.key_id,nonce:task.nonce,tag:task.auth_tag,ciphertext:task.payload_ciphertext},mailAad(task.id,task.purpose,task.template_version))).token;
+      const response=await fetch(base+'/api/v1/auth/bootstrap/complete',json({token,password,display_name:'HTTP administrator'}));
+      expect(response.status).toBe(200);expect((await response.json()).data).toEqual({initialized:true,login_required:true});expect(response.headers.get('set-cookie')).toBeNull();
+      expect((await fetch(base+'/api/v1/auth/bootstrap/create',json({email:'forged@example.test'}))).status).toBe(404);
+    }finally{await initializedDatabase(database.pool);}
+  });
+
 });
