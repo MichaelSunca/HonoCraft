@@ -42,6 +42,19 @@ it('reports a changed invitation without exposing its roles or inviter details',
 async function adminRequest(role='admin'){
   const actor=await identity(database.pool,role);return {actor,headers:{origin,'content-type':'application/json',cookie:`honocraft_dev_session=${actor.token}`,'x-csrf-token':csrfForSession(Buffer.alloc(32,3),actor.sessionId,'test-epoch'),'idempotency-key':randomUUID()}};
 }
+it('supplies authorized role choices with bounded strict filters and private reference counts',async()=>{
+  const {headers}=await adminRequest(),member=await adminRequest('user');
+  const response=await fetch(base+'/api/v1/roles?code=user',{headers});expect(response.status).toBe(200);
+  const role=(await response.json()).data.items[0];
+  expect(role).toMatchObject({code:'user',is_builtin:true,version:1,permission_codes:[],allowed_actions:expect.arrayContaining(['invite'])});
+  expect(role.reference_counts).toMatchObject({registration_defaults:1});expect(role).not.toHaveProperty('users');
+  expect((await fetch(base+'/api/v1/roles/'+role.id,{headers})).status).toBe(200);
+  expect((await fetch(base+'/api/v1/roles?is_builtin=false',{headers})).status).toBe(200);
+  for(const query of ['is_builtin=anything','page_size=101','sort=password_hash','query=a'])expect((await fetch(base+'/api/v1/roles?'+query,{headers})).status).toBe(422);
+  expect((await fetch(base+'/api/v1/roles',{headers:member.headers})).status).toBe(403);
+  expect((await fetch(base+'/api/v1/roles/'+randomUUID(),{headers:member.headers})).status).toBe(403);
+  expect((await fetch(base+'/api/v1/roles/'+randomUUID(),{headers})).status).toBe(404);
+});
 it('creates, lists, resends and revokes through authenticated versioned management routes',async()=>{
   const {headers}=await adminRequest();
   const created=await fetch(base+'/api/v1/invites',{method:'POST',headers,body:JSON.stringify({email:'managed@example.test'})});expect(created.status).toBe(202);const id=(await created.json()).data.id;

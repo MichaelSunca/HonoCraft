@@ -106,6 +106,7 @@ Worker 每秒轮询，单进程最多两个活动投递、数据库池最多 5 �
 
 | 方法 / 路径 | 输入 | 成功结果 |
 | --- | --- | --- |
+| GET `/roles`、`/roles/:id` | role:read；分页 query/code/is_builtin | 角色、权限、引用计数及当前操作资格，不含用户明细 |
 | GET `/invites` | page/page_size、query、status、inviter_id、created_from/to、sort、direction | 邀请分页及总数 |
 | GET `/invites/:id` | UUID | 邀请详情、角色快照、邮件摘要和可用操作 |
 | POST `/invites` | email、可选 role_ids、高权限时 confirmation | 202 id/version/status/expires_at/mail_status |
@@ -121,7 +122,7 @@ query 去除首尾空格后为空或 2–100 码点，`%`、`_` 按字面搜索�
 
 ## 浏览器页面与测试
 
-当前可用 `/login`、`/register`、`/bootstrap`、`/verify-email`、`/forgot-password`、`/reset-password`、`/accept-invite`、`/`、`/profile`、`/security` 和 `/sessions`，支持中文/英文、浅色/深色/系统外观。注册入口遵守公开设置；管理员后台、邀请管理和邮箱变更等页面仍待实现。
+当前可用 `/login`、`/register`、`/bootstrap`、`/verify-email`、`/forgot-password`、`/reset-password`、`/accept-invite`、`/`、`/profile`、`/security`、`/sessions` 和 `/invites`，支持中文/英文、浅色/深色/系统外观。注册入口遵守公开设置；邀请管理支持分页筛选、详情、自定义角色选择、创建/重发/撤销/再次邀请、版本冲突核对及高权限近期验证；其他管理页面和邮箱变更仍待实现。
 
 邮件凭证从 fragment 进入当前页面内存后立即清除地址栏；打开页面不消费凭证，必须主动提交。刷新或离开页面后需重新打开原始邮件。账号切换、退出、密码重置和受保护请求 401 清除保护缓存及草稿，标签页通过不含凭证的 BroadcastChannel 信号同步失效。退出网络失败会保留“尚未确认”提示并提供重试，不声称服务器会话已撤销。
 

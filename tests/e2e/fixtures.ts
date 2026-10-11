@@ -2,6 +2,7 @@ import {test as base} from '@playwright/test';
 import type {Pool} from 'pg';
 import {resolve} from 'node:path';
 import {once} from 'node:events';
+import {writeFile} from 'node:fs/promises';
 import {startTestPostgres,availablePort} from '../helpers/postgres.js';
 import {migrate} from '../../apps/server/src/infrastructure/migrations.js';
 import {loadConfig} from '../../apps/server/src/infrastructure/config.js';
@@ -18,8 +19,8 @@ const meta=()=>({requestId:randomUUID(),ip:'127.0.0.1',userAgent:'browser fixtur
 export const password='A browser testing secret passphrase';
 type Backend={pool:Pool;origin:string;initialize:()=>Promise<string>;account:()=>Promise<void>;token:(purpose:string)=>Promise<string>};
 export const test=base.extend<{backend:Backend}>({backend:async({page},use,testInfo)=>{
-  const responses:Array<{path:string;status:number;code?:string}>=[];
-  page.on('response',response=>{const path=new URL(response.url()).pathname;if(!path.startsWith('/api/'))return;const record:{path:string;status:number;code?:string}={path,status:response.status()};responses.push(record);if(response.status()>=400)void response.json().then(body=>{record.code=body.error?.code;}).catch(()=>undefined);});
+  const responses:Array<{path:string;status:number;code?:string;sessionTimes?:unknown}>=[],diagnostics:Promise<void>[]=[];
+  page.on('response',response=>{const path=new URL(response.url()).pathname;if(!path.startsWith('/api/'))return;const record:{path:string;status:number;code?:string;sessionTimes?:unknown}={path,status:response.status()};responses.push(record);if(response.status()>=400)diagnostics.push(response.json().then(async body=>{record.code=body.error?.code;if(record.code==='SESSION_INVALID')record.sessionTimes=(await database.pool.query('SELECT created_at,last_seen_at,clock_timestamp() observed_at,extract(epoch FROM last_seen_at-clock_timestamp())*1000 AS future_ms FROM sessions')).rows;}).catch(()=>undefined));});
   const database=await startTestPostgres();let server:ReturnType<typeof startHttpServer>|undefined;
   try{
     await migrate(database.pool);await database.pool.query("UPDATE system_settings SET typed_value=jsonb_set(typed_value,'{default_locale}','\"en\"') WHERE key='branding'");
@@ -43,8 +44,11 @@ export const test=base.extend<{backend:Backend}>({backend:async({page},use,testI
     await use({pool:database.pool,origin,initialize,account,token});
   }finally{
     if(testInfo.status!==testInfo.expectedStatus){
+      await Promise.allSettled(diagnostics);
       const sessions=await database.pool.query('SELECT created_at,last_seen_at,idle_expires_at,absolute_expires_at,revoked_at,clock_timestamp() observed_at FROM sessions').catch(()=>({rows:[]}));
-      await testInfo.attach('safe-runtime-diagnostic',{body:JSON.stringify({responses,sessions:sessions.rows}),contentType:'application/json'});
+      const diagnosticPath=testInfo.outputPath('safe-runtime-diagnostic.json');
+      await writeFile(diagnosticPath,JSON.stringify({responses,sessions:sessions.rows}));
+      await testInfo.attach('safe-runtime-diagnostic',{path:diagnosticPath,contentType:'application/json'});
     }
     if(server){server.closeAllConnections();await new Promise<void>(resolve=>server!.close(()=>resolve()));}await database.close();}
 }});

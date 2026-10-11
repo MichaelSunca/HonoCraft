@@ -41,6 +41,10 @@ export function assertGrantableRoles(actor: AccessSnapshot, roles: readonly Role
 export function assertRoleEditable(actor: AccessSnapshot, role: RoleSnapshot, assignedToPrivileged: boolean): void {
   assertActive(actor);
   if (role.isBuiltin) throw new AppError('FORBIDDEN');
+  assertRoleCopyable(actor,role,assignedToPrivileged);
+}
+export function assertRoleCopyable(actor: AccessSnapshot, role: RoleSnapshot, assignedToPrivileged: boolean): void {
+  assertActive(actor);
   if (isSuperAdmin(actor)) return;
   if (assignedToPrivileged || actor.roles.some(own => own.id === role.id) || !roleInDelegableScope(actor, role)) throw new AppError('FORBIDDEN');
 }

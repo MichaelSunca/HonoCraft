@@ -30,6 +30,7 @@ import {createAccountSecurity} from '../modules/auth/account-security.js';
 import {createPublicInvitationService} from '../modules/invitations/public.js';
 import {createInvitationManagement} from '../modules/invitations/management.js';
 import {createInvitationQueries} from '../modules/invitations/queries.js';
+import {createRoleQueries} from '../modules/access/queries.js';
 import {InvitationActionSchema} from '@honocraft/contracts/invitations';
 
 type HttpEnvironment={Variables:{requestId:string;meta:RequestMeta;startedAt:number}};
@@ -40,6 +41,7 @@ export function createHttpApp({pool,config,passwords,secrets,webRoot}:AppDepende
   const publicAuth=createPublicAuthService(pool,{epoch:secrets.epoch,digestKey:secrets.digestKey.key,mailKeyring:secrets.mailKeyring},passwords);
   const invitations=createPublicInvitationService(pool,{epoch:secrets.epoch,digestKey:secrets.digestKey.key},passwords);
   const invitationManagement=createInvitationManagement(pool,secrets),invitationQueries=createInvitationQueries(pool,secrets.epoch);
+  const roleQueries=createRoleQueries(pool,secrets.epoch);
   const login=createLoginService(pool,{epoch:secrets.epoch,digestKey:secrets.digestKey.key},passwords);
   const mutate=createMutationGateway(pool,secrets,{'me.profile.update':profileMutation,'auth.logout':logoutMutation});
   const sessions=createSessionManagement(pool,secrets),accountSecurity=createAccountSecurity(pool,secrets,passwords);
@@ -113,6 +115,8 @@ export function createHttpApp({pool,config,passwords,secrets,webRoot}:AppDepende
     return c.json({data:{authenticated:true},request_id:c.get('requestId')});
   });
   app.get('/api/v1/invites',async c=>c.json({data:await invitationQueries.list(actorRef(c),c.req.query()),request_id:c.get('requestId')}));
+  app.get('/api/v1/roles',async c=>c.json({data:await roleQueries.list(actorRef(c),c.req.query()),request_id:c.get('requestId')}));
+  app.get('/api/v1/roles/:id',async c=>c.json({data:await roleQueries.get(actorRef(c),c.req.param('id')),request_id:c.get('requestId')}));
   app.get('/api/v1/invites/:id',async c=>c.json({data:await invitationQueries.get(actorRef(c),c.req.param('id')),request_id:c.get('requestId')}));
   app.post('/api/v1/invites',async c=>{
     const result=await invitationManagement.create(actorRef(c),await parseJson(()=>c.req.json()),c.get('meta'),c.req.header('idempotency-key'),remaining(c));
@@ -167,7 +171,7 @@ export function createHttpApp({pool,config,passwords,secrets,webRoot}:AppDepende
   });
   if(webRoot){
     app.get('/assets/*',serveStatic({root:webRoot}));
-    for(const route of ['/','/login','/register','/bootstrap','/verify-email','/forgot-password','/reset-password','/accept-invite','/profile','/security','/sessions','/403','/404','/unavailable']){
+    for(const route of ['/','/login','/register','/bootstrap','/verify-email','/forgot-password','/reset-password','/accept-invite','/profile','/security','/sessions','/invites','/403','/404','/unavailable']){
       app.get(route,serveStatic({root:webRoot,path:'index.html'}));
     }
   }
