@@ -27,6 +27,7 @@ import { getMe } from '../modules/users/me.js';
 import { createClientIpResolver } from './security.js';
 import {createSessionManagement} from '../modules/auth/session-management.js';
 import {createAccountSecurity} from '../modules/auth/account-security.js';
+import {createPublicInvitationService} from '../modules/invitations/public.js';
 
 type HttpEnvironment={Variables:{requestId:string;meta:RequestMeta;startedAt:number}};
 export type AppDependencies={webRoot?:string;pool:Pool;config:AppConfig;passwords:PasswordService;secrets:{epoch:string;csrfKey:Buffer;digestKey:DigestKey;mailKeyring:Keyring}};
@@ -34,6 +35,7 @@ export function createHttpApp({pool,config,passwords,secrets,webRoot}:AppDepende
   const app=new Hono<HttpEnvironment>();
   const resolveIp=createClientIpResolver(config.trustedProxyCidrs);
   const publicAuth=createPublicAuthService(pool,{epoch:secrets.epoch,digestKey:secrets.digestKey.key,mailKeyring:secrets.mailKeyring},passwords);
+  const invitations=createPublicInvitationService(pool,{epoch:secrets.epoch,digestKey:secrets.digestKey.key},passwords);
   const login=createLoginService(pool,{epoch:secrets.epoch,digestKey:secrets.digestKey.key},passwords);
   const mutate=createMutationGateway(pool,secrets,{'me.profile.update':profileMutation,'auth.logout':logoutMutation});
   const sessions=createSessionManagement(pool,secrets),accountSecurity=createAccountSecurity(pool,secrets,passwords);
@@ -92,6 +94,7 @@ export function createHttpApp({pool,config,passwords,secrets,webRoot}:AppDepende
   for(const [path,action,status] of [
     ['/register',publicAuth.register,202],['/email/resend',publicAuth.resend,202],['/email/verify',publicAuth.verify,200],
     ['/password/forgot',publicAuth.forgot,202],['/password/reset',publicAuth.reset,200],
+    ['/invites/preview',invitations.preview,200],['/invites/accept',invitations.accept,200],
   ] as const){
     app.post(`/api/v1/auth${path}`,async c=>{
       const data=await action(await parseJson(()=>c.req.json()),c.get('meta'),config.httpTimeoutMs-(performance.now()-c.get('startedAt')));
@@ -147,7 +150,7 @@ export function createHttpApp({pool,config,passwords,secrets,webRoot}:AppDepende
   });
   if(webRoot){
     app.get('/assets/*',serveStatic({root:webRoot}));
-    for(const route of ['/','/login','/register','/bootstrap','/verify-email','/forgot-password','/reset-password','/profile','/security','/sessions','/403','/404','/unavailable']){
+    for(const route of ['/','/login','/register','/bootstrap','/verify-email','/forgot-password','/reset-password','/accept-invite','/profile','/security','/sessions','/403','/404','/unavailable']){
       app.get(route,serveStatic({root:webRoot,path:'index.html'}));
     }
   }

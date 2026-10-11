@@ -1,6 +1,9 @@
 import i18n from 'i18next';
 import {initReactI18next} from 'react-i18next';
 export const en={
+  invite:'Accept invitation',inviteIntro:'Choose your name and password to join this instance. Your account is created only when you accept.',
+  invitationFor:'Invitation to {{instance}}',invitationAccepted:'Invitation accepted. Sign in with your new account.',
+  invitationReissue:'This invitation changed. Ask an administrator to resend it, then open the new link.',emailConflict:'This email is already in use. Sign in to the existing account or contact an administrator.',
   security:'Security',sessions:'Sessions',securityIntro:'Verify your identity for sensitive actions or update your password.',
   verifyIdentityTitle:'Verify your identity',verifyIdentity:'Verify identity',currentPassword:'Current password',currentPasswordIncorrect:'Current password is incorrect.',identityVerified:'Identity verified until {{time}}. This applies only to this device.',
   changePassword:'Change password',changePasswordHelp:'Changing your password signs out every device, including this one. You will need to sign in again.',
@@ -40,6 +43,9 @@ export const en={
 };
 export type MessageKey=keyof typeof en;
 const zh:Record<MessageKey,string>={
+  invite:'接受邀请',inviteIntro:'设置你的名称和密码以加入此实例。只有点击接受后才会创建账号。',
+  invitationFor:'加入 {{instance}} 的邀请',invitationAccepted:'邀请已接受，请使用新账号登录。',
+  invitationReissue:'此邀请已发生变化。请联系管理员重新发送，再打开新的邮件链接。',emailConflict:'此邮箱已被使用，请登录现有账号或联系管理员。',
   security:'账号安全',sessions:'会话管理',securityIntro:'为敏感操作验证身份，或更新你的密码。',
   verifyIdentityTitle:'验证身份',verifyIdentity:'验证身份',currentPassword:'当前密码',currentPasswordIncorrect:'当前密码不正确。',identityVerified:'身份验证有效至 {{time}}，仅适用于当前设备。',
   changePassword:'修改密码',changePasswordHelp:'修改密码后，所有设备（包括当前设备）都将退出，需要重新登录。',

@@ -22,6 +22,7 @@ export async function api<T>(path:string,schema:z.ZodType<T>,options:{body?:unkn
   const result=z.object({data:schema}).safeParse(payload);if(!result.success)throw new ApiError('INTERNAL_ERROR');return result.data.data;
 }
 const errors:Record<string,MessageKey>={AUTH_FAILED:'authFailed',SESSION_INVALID:'sessionEnded',CREDENTIAL_INVALID:'credentialInvalid',RATE_LIMITED:'rateLimited',PASSWORD_REJECTED:'passwordRejected',
+  INVITE_REISSUE_REQUIRED:'invitationReissue',EMAIL_CONFLICT:'emailConflict',
   EMAIL_VERIFICATION_REQUIRED:'pending',REGISTRATION_DISABLED:'registrationClosed',SYSTEM_NOT_INITIALIZED:'uninitialized',BOOTSTRAP_CLOSED:'bootstrapClosed',VERSION_CONFLICT:'conflict',
   VALIDATION_ERROR:'invalid',FORBIDDEN:'forbidden',ORIGIN_INVALID:'forbidden',CSRF_INVALID:'csrfInvalid',AUTH_BUSY:'busy',BUSY_RETRY:'busy',DEPENDENCY_UNAVAILABLE:'unavailableIntro',NETWORK:'network'};
 export function errorMessage(error:unknown):MessageKey{return error instanceof ApiError?errors[error.code]??'internal':'network';}

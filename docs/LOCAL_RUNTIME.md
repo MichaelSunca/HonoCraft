@@ -91,15 +91,19 @@ Worker 每秒轮询，单进程最多两个活动投递、数据库池最多 5 �
 | `/email/verify` | token | 200 verified、login_required；不自动登录 |
 | `/password/forgot` | email | 202 accepted；不撤销现有会话 |
 | `/password/reset` | token、new_password | 200 reset、login_required；撤销目标全部会话并清浏览器 Cookie |
+| `/invites/preview` | token | 200 instance_name、email、expires_at；不消费凭证 |
+| `/invites/accept` | token、password、display_name | 200 accepted、login_required；不自动登录 |
 
 注册保存当时的默认角色，邮箱验证不会改用新的默认角色；角色后来不再合格则拒绝激活。重复注册不覆盖已有账号密码。存在有效邮箱修正请求时，不重发或消费原邮箱验证链接。
 
 找回密码对不存在、Pending、禁用和有效账号返回相同响应；只有有效且已验证的本地密码账号会入队重置邮件。邮箱特定发送额度内部抑制，来源 IP 超额返回 429。重置凭证用途、版本、邮箱、epoch 和当前用户状态均在提交事务中重查；成功时消费凭证、撤销其他重置/恢复凭证和会话、记录审计、入队安全通知，失败则一起回滚。
 
+邀请邮件指向 `/accept-invite#token=…`。页面立即清除 fragment，仅在当前页面内存中保留凭证；预览显示实例、目标邮箱及到期时间，用户填写名称和密码后明确接受。接受会重新检查邀请人当前资格和全部角色版本，创建已验证账号并分配原角色集合；角色变化要求管理员重发，已占用邮箱返回冲突。账号、角色、邀请终态、凭证消费、邮件取消与审计同事务提交。刷新或离开页面后需重开邮件。当前已交付预览/接受 API 和页面；管理员创建、重发、撤销邀请及管理列表仍待实现，不能把接受流程的测试夹具作为生产签发入口。
+
 
 ## 浏览器页面与测试
 
-当前可用 `/login`、`/register`、`/bootstrap`、`/verify-email`、`/forgot-password`、`/reset-password`、`/`、`/profile`、`/security` 和 `/sessions`，支持中文/英文、浅色/深色/系统外观。注册入口遵守公开设置；管理员后台、邀请和邮箱变更等页面仍待实现。
+当前可用 `/login`、`/register`、`/bootstrap`、`/verify-email`、`/forgot-password`、`/reset-password`、`/accept-invite`、`/`、`/profile`、`/security` 和 `/sessions`，支持中文/英文、浅色/深色/系统外观。注册入口遵守公开设置；管理员后台、邀请管理和邮箱变更等页面仍待实现。
 
 邮件凭证从 fragment 进入当前页面内存后立即清除地址栏；打开页面不消费凭证，必须主动提交。刷新或离开页面后需重新打开原始邮件。账号切换、退出、密码重置和受保护请求 401 清除保护缓存及草稿，标签页通过不含凭证的 BroadcastChannel 信号同步失效。退出网络失败会保留“尚未确认”提示并提供重试，不声称服务器会话已撤销。
 
