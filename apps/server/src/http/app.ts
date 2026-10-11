@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { Server as HttpServer } from 'node:http';
-import { Hono } from 'hono';
+import { Hono,type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { getCookie,setCookie,deleteCookie } from 'hono/cookie';
 import { serve } from '@hono/node-server';
@@ -25,6 +25,8 @@ import { createMutationGateway } from '../modules/access/mutation-gateway.js';
 import { profileMutation } from '../modules/users/profile.js';
 import { getMe } from '../modules/users/me.js';
 import { createClientIpResolver } from './security.js';
+import {createSessionManagement} from '../modules/auth/session-management.js';
+import {createAccountSecurity} from '../modules/auth/account-security.js';
 
 type HttpEnvironment={Variables:{requestId:string;meta:RequestMeta;startedAt:number}};
 export type AppDependencies={webRoot?:string;pool:Pool;config:AppConfig;passwords:PasswordService;secrets:{epoch:string;csrfKey:Buffer;digestKey:DigestKey;mailKeyring:Keyring}};
@@ -34,6 +36,9 @@ export function createHttpApp({pool,config,passwords,secrets,webRoot}:AppDepende
   const publicAuth=createPublicAuthService(pool,{epoch:secrets.epoch,digestKey:secrets.digestKey.key,mailKeyring:secrets.mailKeyring},passwords);
   const login=createLoginService(pool,{epoch:secrets.epoch,digestKey:secrets.digestKey.key},passwords);
   const mutate=createMutationGateway(pool,secrets,{'me.profile.update':profileMutation,'auth.logout':logoutMutation});
+  const sessions=createSessionManagement(pool,secrets),accountSecurity=createAccountSecurity(pool,secrets,passwords);
+  const actorRef=(c:Context<HttpEnvironment>)=>({token:getCookie(c,config.sessionCookieName)??'',csrfToken:c.req.header('x-csrf-token')??''});
+  const remaining=(c:Context<HttpEnvironment>)=>config.httpTimeoutMs-(performance.now()-c.get('startedAt'));
   const cookieOptions={path:'/',httpOnly:true,secure:config.secureCookies,sameSite:'Lax' as const};
   app.use('*',async(c,next)=>{
     c.set('requestId',randomUUID());c.set('startedAt',performance.now());
@@ -109,6 +114,26 @@ export function createHttpApp({pool,config,passwords,secrets,webRoot}:AppDepende
       await parseJson(()=>c.req.json()),c.get('meta'),undefined,config.httpTimeoutMs-(performance.now()-c.get('startedAt')));
     return c.json({data:result.data,request_id:c.get('requestId')},result.status as ContentfulStatusCode);
   });
+  app.post('/api/v1/auth/reauthenticate',async c=>{
+    const result=await accountSecurity.reauthenticate(actorRef(c),await parseJson(()=>c.req.json()),c.get('meta'),remaining(c));
+    return c.json({data:result.data,request_id:c.get('requestId')});
+  });
+  app.post('/api/v1/me/password',async c=>{
+    const result=await accountSecurity.changePassword(actorRef(c),await parseJson(()=>c.req.json()),c.get('meta'),c.req.header('idempotency-key'),remaining(c));
+    deleteCookie(c,config.sessionCookieName,cookieOptions);
+    return c.json({data:result.data,replayed:result.replayed,request_id:c.get('requestId')});
+  });
+  app.get('/api/v1/me/sessions',async c=>c.json({data:await sessions.list(actorRef(c),c.req.query()),request_id:c.get('requestId')}));
+  app.delete('/api/v1/me/sessions/:id',async c=>{
+    if(!z.strictObject({}).safeParse(await parseJson(()=>c.req.json())).success)throw new AppError('VALIDATION_ERROR');
+    const result=await sessions.revoke(actorRef(c),{id:c.req.param('id')},c.get('meta'),c.req.header('idempotency-key'),remaining(c));
+    if(!result.replayed&&'is_current' in result.data&&result.data.is_current)deleteCookie(c,config.sessionCookieName,cookieOptions);
+    return c.json({data:result.data,replayed:result.replayed,request_id:c.get('requestId')});
+  });
+  app.post('/api/v1/me/sessions/revoke-others',async c=>{
+    const result=await sessions.revokeOthers(actorRef(c),await parseJson(()=>c.req.json()),c.get('meta'),c.req.header('idempotency-key'),remaining(c));
+    return c.json({data:result.data,replayed:result.replayed,request_id:c.get('requestId')});
+  });
   app.post('/api/v1/auth/logout',async c=>{
     const input=await parseJson(()=>c.req.json());
     if(!z.strictObject({}).safeParse(input).success)throw new AppError('VALIDATION_ERROR');
@@ -122,7 +147,7 @@ export function createHttpApp({pool,config,passwords,secrets,webRoot}:AppDepende
   });
   if(webRoot){
     app.get('/assets/*',serveStatic({root:webRoot}));
-    for(const route of ['/','/login','/register','/bootstrap','/verify-email','/forgot-password','/reset-password','/profile','/403','/404','/unavailable']){
+    for(const route of ['/','/login','/register','/bootstrap','/verify-email','/forgot-password','/reset-password','/profile','/security','/sessions','/403','/404','/unavailable']){
       app.get(route,serveStatic({root:webRoot,path:'index.html'}));
     }
   }

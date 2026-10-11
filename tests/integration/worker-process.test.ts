@@ -30,7 +30,11 @@ afterEach(async()=>{
   smtp.release();if(child&&child.exitCode===null&&child.signalCode===null){const exited=new Promise(resolve=>child!.once('exit',resolve));child.kill('SIGTERM');await exited;}
   child=undefined;await smtp?.close();await rm(directory,{recursive:true,force:true});
 });
-async function enqueue(){return withTransaction(database.pool,'shared',tx=>enqueueMail(tx,{activeKeyId:'v1',keys:new Map([['v1',mailKey]])},{eventId:randomUUID(),purpose:'password_changed',recipient:`${randomUUID()}@example.test`,displayName:'User',instanceName:'HonoCraft',locale:'en',timeZone:'UTC',occurredAt:new Date().toISOString()}));}
+async function enqueue(){return withTransaction(database.pool,'shared',async tx=>{
+  const id=await enqueueMail(tx,{activeKeyId:'v1',keys:new Map([['v1',mailKey]])},{eventId:randomUUID(),purpose:'password_changed',recipient:`${randomUUID()}@example.test`,displayName:'User',instanceName:'HonoCraft',locale:'en',timeZone:'UTC',occurredAt:new Date().toISOString()});
+  // These process tests exercise already-due work. Scheduling boundaries have dedicated outbox tests.
+  await tx.query("UPDATE email_tasks SET next_attempt_at=clock_timestamp()-interval '1 minute' WHERE id=$1",[id]);return id;
+});}
 async function until(predicate:()=>boolean|Promise<boolean>){const deadline=performance.now()+5000;while(!await predicate()){if(performance.now()>deadline)throw new Error('Worker observation timed out');await delay(25);}}
 function launch(){
   child=spawn(process.execPath,['--import',createRequire(import.meta.url).resolve('tsx'),resolve('apps/server/src/worker-main.ts')],{cwd:directory,env,stdio:['ignore','pipe','pipe']});

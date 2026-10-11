@@ -99,7 +99,7 @@ Worker 每秒轮询，单进程最多两个活动投递、数据库池最多 5 �
 
 ## 浏览器页面与测试
 
-当前可用 `/login`、`/register`、`/bootstrap`、`/verify-email`、`/forgot-password`、`/reset-password`、`/` 和 `/profile`，支持中文/英文、浅色/深色/系统外观。注册入口遵守公开设置；管理员后台、会话列表等页面仍待实现。
+当前可用 `/login`、`/register`、`/bootstrap`、`/verify-email`、`/forgot-password`、`/reset-password`、`/`、`/profile`、`/security` 和 `/sessions`，支持中文/英文、浅色/深色/系统外观。注册入口遵守公开设置；管理员后台、邀请和邮箱变更等页面仍待实现。
 
 邮件凭证从 fragment 进入当前页面内存后立即清除地址栏；打开页面不消费凭证，必须主动提交。刷新或离开页面后需重新打开原始邮件。账号切换、退出、密码重置和受保护请求 401 清除保护缓存及草稿，标签页通过不含凭证的 BroadcastChannel 信号同步失效。退出网络失败会保留“尚未确认”提示并提供重试，不声称服务器会话已撤销。
 
@@ -108,3 +108,20 @@ Worker 每秒轮询，单进程最多两个活动投递、数据库池最多 5 �
 `pnpm test:e2e` 先构建前端，再启动隔离 PostgreSQL 与真实 HTTP 服务运行 Chromium；不依赖开发者 `.env` 或业务数据库。首次运行使用 `pnpm exec playwright install --with-deps chromium` 安装浏览器及系统依赖，Linux 截图还需 CJK 字体（例如 Noto CJK）。浏览器资源可通过 `PLAYWRIGHT_BROWSERS_PATH` 自定义；受限环境可使用已准备的共享库和 fontconfig 配置，勿将这些机器路径写入应用配置。
 
 测试关闭 trace，失败截图在忽略的 `test-results/`，可视检查截图在 `.local/previews/`；截图只使用隔离测试数据。未运行完整 P0、Docker、备份恢复与性能验收。
+
+
+## 本人账号安全与会话
+
+`/security` 提供当前密码验证与本人改密。近期验证只作用于当前 session，有效区间为五分钟，不因浏览页面刷新。输入错误密码不会撤销现有会话；错误受来源 IP 与账号共享失败计数约束。改密每次重新验证原密码，提交时检查用户编辑版本和密码版本；成功后撤销所有会话与尚未消费的重置/恢复凭证，取消相应旧邮件、写审计并发送安全通知，然后要求重新登录。
+
+`/sessions` 分页列出本人当前仍有效的会话，显示当前设备、尽力识别的设备类别/浏览器/系统、来源 IP 和实例时区时间。可以确认撤销指定会话或退出其他设备。撤销自己当前会话会清 Cookie 并回登录；撤销其他设备保留当前会话。过期记录不等待 Worker 清理即可从列表排除。
+
+| API（相对 `/api/v1`） | 输入 | 结果 |
+| --- | --- | --- |
+| POST `/auth/reauthenticate` | current_password | reauthenticated_at、valid_until |
+| POST `/me/password` | expected_version、current_password、new_password；Idempotency-Key | changed、login_required；清 Cookie |
+| GET `/me/sessions` | page、page_size | items、page、page_size、total |
+| DELETE `/me/sessions/:id` | 空 JSON；Idempotency-Key | revoked、is_current |
+| POST `/me/sessions/revoke-others` | 空 JSON；Idempotency-Key | revoked_count |
+
+所有写入均校验 Origin 和当前会话 CSRF。幂等键为 UUID：首次完成返回对应 DTO，合法重放返回最小 operation summary 并标记 `replayed:true`，前端刷新列表获取最新状态。响应不确定时保留同一正文和幂等键，不自动换键重试；编辑正文后使用新键。密码提交的凭证仅留在当前表单内存，离开页面即丢弃。改密成功本身使旧会话失效，响应丢失后也不能用旧 Cookie 重新取得身份，需重新登录。

@@ -6,18 +6,18 @@ export class ApiError extends Error{
 let generation=0;
 export function discardSession(){generation++;}
 export const sessionEvents=new EventTarget();
-export async function api<T>(path:string,schema:z.ZodType<T>,options:{body?:unknown;method?:string;csrf?:string;protected?:boolean;signal?:AbortSignal}={}):Promise<T>{
+export async function api<T>(path:string,schema:z.ZodType<T>,options:{body?:unknown;method?:string;csrf?:string;idempotencyKey?:string;protected?:boolean;signal?:AbortSignal}={}):Promise<T>{
   const started=generation;
   let response:Response;
   try{
     response=await fetch('/api/v1'+path,{method:options.method??(options.body===undefined?'GET':'POST'),credentials:'same-origin',cache:'no-store',
-      headers:{...(options.body===undefined?{}:{'Content-Type':'application/json'}),...(options.csrf?{'X-CSRF-Token':options.csrf}:{})},
+      headers:{...(options.body===undefined?{}:{'Content-Type':'application/json'}),...(options.csrf?{'X-CSRF-Token':options.csrf}:{}),...(options.idempotencyKey?{'Idempotency-Key':options.idempotencyKey}:{})},
       ...(options.body===undefined?{}:{body:JSON.stringify(options.body)}),...(options.signal?{signal:options.signal}:{})});
   }catch(error){if(error instanceof DOMException&&error.name==='AbortError')throw error;throw new ApiError('NETWORK');}
   if(options.protected&&started!==generation)throw new DOMException('Session changed','AbortError');
-  if(response.status===401&&options.protected){sessionEvents.dispatchEvent(new Event('invalid'));throw new ApiError('SESSION_INVALID',401);}
-  let payload:unknown;try{payload=await response.json();}catch{throw new ApiError('INTERNAL_ERROR',response.status);}
-  if(!response.ok){const error=z.object({error:z.object({code:z.string()})}).safeParse(payload);const seconds=Number(response.headers.get('Retry-After'));throw new ApiError(error.success?error.data.error.code:'INTERNAL_ERROR',response.status,Number.isFinite(seconds)&&seconds>0?Math.ceil(seconds):60);}
+  let payload:unknown;try{payload=await response.json();}catch{if(response.status===401&&options.protected)sessionEvents.dispatchEvent(new Event('invalid'));throw new ApiError('INTERNAL_ERROR',response.status);}
+  if(options.protected&&started!==generation)throw new DOMException('Session changed','AbortError');
+  if(!response.ok){const error=z.object({error:z.object({code:z.string()})}).safeParse(payload);if(response.status===401&&options.protected&&(!error.success||error.data.error.code!=='AUTH_FAILED'))sessionEvents.dispatchEvent(new Event('invalid'));const seconds=Number(response.headers.get('Retry-After'));throw new ApiError(error.success?error.data.error.code:'INTERNAL_ERROR',response.status,Number.isFinite(seconds)&&seconds>0?Math.ceil(seconds):60);}
   if(options.protected&&started!==generation)throw new DOMException('Session changed','AbortError');
   const result=z.object({data:schema}).safeParse(payload);if(!result.success)throw new ApiError('INTERNAL_ERROR');return result.data.data;
 }

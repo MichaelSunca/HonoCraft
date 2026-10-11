@@ -48,3 +48,5 @@ export const NoteInputSchema = z.strictObject({ title: text(1, 120).refine(value
 export const NoteUpdateSchema = NoteInputSchema.extend({ expected_version: VersionSchema });
 export type Pagination = z.infer<typeof PaginationSchema>;
 export type Locale = z.infer<typeof LocaleSchema>;
+export const ReauthenticateSchema=z.strictObject({current_password:text(1,128)});
+export const ChangePasswordSchema=z.strictObject({expected_version:VersionSchema,current_password:text(1,128),new_password:PasswordSchema});

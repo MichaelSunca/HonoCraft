@@ -13,3 +13,6 @@ export const MeSchema=z.object({
 });
 export type PublicSettings=z.infer<typeof PublicSettingsSchema>;
 export type Me=z.infer<typeof MeSchema>;
+export const DeviceSchema=z.object({category:z.enum(['desktop','mobile','tablet','unknown']),browser:z.enum(['Chrome','Firefox','Safari','Edge','unknown']),os:z.enum(['Windows','macOS','Linux','Android','iOS','unknown'])});
+export const SessionListSchema=z.object({items:z.array(z.object({id:z.uuid(),is_current:z.boolean(),device:DeviceSchema,ip:z.string(),created_at:z.string(),last_seen_at:z.string(),absolute_expires_at:z.string()})),page:z.number().int().positive(),page_size:z.number().int().positive(),total:z.number().int().nonnegative()});
+export const ReauthenticatedSchema=z.object({reauthenticated_at:z.iso.datetime(),valid_until:z.iso.datetime()});

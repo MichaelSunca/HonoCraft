@@ -1,6 +1,16 @@
 import i18n from 'i18next';
 import {initReactI18next} from 'react-i18next';
 export const en={
+  security:'Security',sessions:'Sessions',securityIntro:'Verify your identity for sensitive actions or update your password.',
+  verifyIdentityTitle:'Verify your identity',verifyIdentity:'Verify identity',currentPassword:'Current password',currentPasswordIncorrect:'Current password is incorrect.',identityVerified:'Identity verified until {{time}}. This applies only to this device.',
+  changePassword:'Change password',changePasswordHelp:'Changing your password signs out every device, including this one. You will need to sign in again.',
+  passwordVersionConflict:'Your account changed elsewhere. Your inputs are preserved. Reload the current version before confirming again.',reloadVersion:'Reload current version',
+  sessionsIntro:'Review your active sessions. Device information is approximate; an IP address does not identify a unique device.',thisDevice:'This device',
+  signOutDevice:'Sign out device',signOutThis:'Sign out this device',signOutOthers:'Sign out other devices',confirmSignOut:'Confirm sign-out',cancel:'Cancel',
+  confirmDevice:'Sign out this session?',confirmOthers:'Sign out all other devices?',confirmDeviceHelp:'The selected session will lose access immediately after confirmation.',confirmOthersHelp:'Your current session stays signed in. All other sessions will lose access.',
+  sessionRevoked:'Session access updated.',noSessions:'No active sessions.',loggedInAt:'Signed in',lastActive:'Last active',expiresAt:'Expires',sourceIp:'Source IP',
+  desktop:'Desktop',mobile:'Mobile',tablet:'Tablet',unknown:'Unknown',previous:'Previous',next:'Next',pageCount:'Page {{page}} · {{total}} sessions',
+
   language:'Language',appearance:'Appearance',light:'Light',dark:'Dark',system:'System',loading:'Loading…',retry:'Try again',
   login:'Sign in',register:'Create account',bootstrap:'Initialize your instance',verify:'Verify email',forgot:'Forgot password',reset:'Reset password',
   displayName:'Display name',email:'Email',password:'Password',newPassword:'New password',confirmPassword:'Confirm password',
@@ -30,6 +40,16 @@ export const en={
 };
 export type MessageKey=keyof typeof en;
 const zh:Record<MessageKey,string>={
+  security:'账号安全',sessions:'会话管理',securityIntro:'为敏感操作验证身份，或更新你的密码。',
+  verifyIdentityTitle:'验证身份',verifyIdentity:'验证身份',currentPassword:'当前密码',currentPasswordIncorrect:'当前密码不正确。',identityVerified:'身份验证有效至 {{time}}，仅适用于当前设备。',
+  changePassword:'修改密码',changePasswordHelp:'修改密码后，所有设备（包括当前设备）都将退出，需要重新登录。',
+  passwordVersionConflict:'账号已在其他位置修改，输入内容已保留。请重新读取当前版本后再次确认。',reloadVersion:'读取当前版本',
+  sessionsIntro:'查看你的活跃会话。设备信息仅供参考，IP 地址不能唯一标识设备。',thisDevice:'当前设备',
+  signOutDevice:'退出此会话',signOutThis:'退出当前设备',signOutOthers:'退出其他设备',confirmSignOut:'确认退出',cancel:'取消',
+  confirmDevice:'退出此会话？',confirmOthers:'退出其他所有设备？',confirmDeviceHelp:'确认后，选中的会话将立即失去访问权限。',confirmOthersHelp:'保留当前会话，其他所有会话将失去访问权限。',
+  sessionRevoked:'会话访问权限已更新。',noSessions:'没有活跃会话。',loggedInAt:'登录时间',lastActive:'最近活跃',expiresAt:'到期时间',sourceIp:'来源 IP',
+  desktop:'电脑',mobile:'手机',tablet:'平板',unknown:'未知',previous:'上一页',next:'下一页',pageCount:'第 {{page}} 页 · 共 {{total}} 个会话',
+
   language:'语言',appearance:'外观',light:'浅色',dark:'深色',system:'跟随系统',loading:'加载中…',retry:'重试',
   login:'登录',register:'创建账号',bootstrap:'初始化实例',verify:'验证邮箱',forgot:'忘记密码',reset:'重置密码',
   displayName:'显示名称',email:'邮箱',password:'密码',newPassword:'新密码',confirmPassword:'确认密码',
