@@ -32,3 +32,21 @@ test('preview network failures offer an explicit retry without submitting the ac
   await expect(page.getByRole('alert')).toContainText('could not be confirmed');await expect(page.getByRole('button',{name:'Accept invitation',exact:true})).toHaveCount(0);await page.getByRole('button',{name:'Try again',exact:true}).click();await expect(page.getByText(invite.email,{exact:true})).toBeVisible();
   expect((await backend.pool.query('SELECT consumed_at FROM one_time_credentials WHERE id=$1',[invite.credentialId])).rows[0].consumed_at).toBeNull();
 });
+test('an administrator issues a real invitation that a separate browser can accept',async({page,browser,backend})=>{
+  const token=await backend.initialize();await page.goto(backend.origin+'/bootstrap#token='+token);
+  await page.getByLabel('Display name',{exact:true}).fill('Instance owner');await page.getByLabel('Password',{exact:true}).fill(password);await page.getByLabel('Confirm password',{exact:true}).fill(password);await page.getByRole('button',{name:'Create administrator'}).click();
+  await expect(page.getByRole('heading',{name:'Sign in',exact:true})).toBeVisible();await page.getByLabel('Email',{exact:true}).fill('owner@example.test');await page.getByLabel('Password',{exact:true}).fill(password);await page.getByRole('button',{name:'Sign in',exact:true}).click();await expect(page.getByRole('heading',{name:'Your workspace'})).toBeVisible();
+  const response=await page.evaluate(async()=>{
+    const me=await (await fetch('/api/v1/me')).json();
+    const response=await fetch('/api/v1/invites',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':me.data.csrf_token,'Idempotency-Key':crypto.randomUUID()},body:JSON.stringify({email:'invited-browser@example.test'})});
+    return {status:response.status,body:await response.json()};
+  });
+  expect(response.status).toBe(202);expect(response.body.data).toMatchObject({status:'pending',mail_status:'queued'});
+  const guestContext=await browser.newContext();try{
+    const guest=await guestContext.newPage();await guest.goto(backend.origin+'/accept-invite#token='+await backend.token('invite_accept'));await expect(guest.getByText('invited-browser@example.test',{exact:true})).toBeVisible();
+    await guest.getByLabel('Display name',{exact:true}).fill('Invited member');await guest.getByLabel('Password',{exact:true}).fill(password);await guest.getByLabel('Confirm password',{exact:true}).fill(password);await guest.getByRole('button',{name:'Accept invitation',exact:true}).click();await expect(guest.getByRole('heading',{name:'Sign in',exact:true})).toBeVisible();
+    await guest.getByLabel('Email',{exact:true}).fill('invited-browser@example.test');await guest.getByLabel('Password',{exact:true}).fill(password);await guest.getByRole('button',{name:'Sign in',exact:true}).click();await expect(guest.getByRole('heading',{name:'Your workspace'})).toBeVisible();
+    const status=await page.evaluate(async id=>(await (await fetch('/api/v1/invites/'+id)).json()).data.status,response.body.data.id);expect(status).toBe('accepted');
+    expect((await backend.pool.query("SELECT r.code FROM roles r JOIN user_roles ur ON r.id=ur.role_id JOIN users u ON u.id=ur.user_id WHERE u.normalized_email='invited-browser@example.test'")).rows).toEqual([{code:'user'}]);
+  }finally{await guestContext.close();}
+});

@@ -98,7 +98,25 @@ Worker 每秒轮询，单进程最多两个活动投递、数据库池最多 5 �
 
 找回密码对不存在、Pending、禁用和有效账号返回相同响应；只有有效且已验证的本地密码账号会入队重置邮件。邮箱特定发送额度内部抑制，来源 IP 超额返回 429。重置凭证用途、版本、邮箱、epoch 和当前用户状态均在提交事务中重查；成功时消费凭证、撤销其他重置/恢复凭证和会话、记录审计、入队安全通知，失败则一起回滚。
 
-邀请邮件指向 `/accept-invite#token=…`。页面立即清除 fragment，仅在当前页面内存中保留凭证；预览显示实例、目标邮箱及到期时间，用户填写名称和密码后明确接受。接受会重新检查邀请人当前资格和全部角色版本，创建已验证账号并分配原角色集合；角色变化要求管理员重发，已占用邮箱返回冲突。账号、角色、邀请终态、凭证消费、邮件取消与审计同事务提交。刷新或离开页面后需重开邮件。当前已交付预览/接受 API 和页面；管理员创建、重发、撤销邀请及管理列表仍待实现，不能把接受流程的测试夹具作为生产签发入口。
+邀请邮件指向 `/accept-invite#token=…`。页面立即清除 fragment，仅在当前页面内存中保留凭证；预览显示实例、目标邮箱及到期时间，用户填写名称和密码后明确接受。接受会重新检查邀请人当前资格和全部角色版本，创建已验证账号并分配原角色集合；角色变化要求管理员重发，已占用邮箱返回冲突。账号、角色、邀请终态、凭证消费、邮件取消与审计同事务提交。刷新或离开页面后需重开邮件。当前已交付预览/接受 API 和页面，以及下面的邀请管理 API；管理页面仍待实现。
+
+## 邀请管理接口
+
+以下路径相对 `/api/v1`，要求当前有效会话。GET 需要 `invite:read`；POST 需要 `invite:manage`、Origin、CSRF 和 UUID `Idempotency-Key`，并检查当前可授予角色范围。
+
+| 方法 / 路径 | 输入 | 成功结果 |
+| --- | --- | --- |
+| GET `/invites` | page/page_size、query、status、inviter_id、created_from/to、sort、direction | 邀请分页及总数 |
+| GET `/invites/:id` | UUID | 邀请详情、角色快照、邮件摘要和可用操作 |
+| POST `/invites` | email、可选 role_ids、高权限时 confirmation | 202 id/version/status/expires_at/mail_status |
+| POST `/invites/:id/resend` | expected_version、confirmation | 202 新版本及到期时间，旧链接失效 |
+| POST `/invites/:id/revoke` | expected_version、confirmation | 200 id/version/status=revoked |
+
+创建缺省角色为内建 user，显式空数组拒绝。创建确认使用 `confirmation:{target_email,typed_label,reason}`；重发/撤销使用 `confirmation:{target_id,typed_label?,reason}`。高权限邀请要求真正超级管理员、`user:manage-privileged`、当前设备五分钟近期验证，typed_label 必须等于规范邮箱。服务端比较真实目标，不接受布尔“已确认”。
+
+同一邮箱不能已有任何状态的用户，也不能已有有效 Pending 邀请。过期 Pending 在新建事务内终结，新邀请使用新 ID。重发保持 ID、增加版本，更新邀请人及角色版本快照；撤销释放 live 角色引用并保留历史名称。发送受当前地址用途冷却/小时额度及来源 IP 小时额度保护；配额不足不替换旧链接。相同幂等键与正文的重放不重复发送或扣配额，但仍检查当前授权和历史高权限要求；响应带 `replayed:true` 时 data 是最小操作摘要，应重新查询详情。
+
+query 去除首尾空格后为空或 2–100 码点，`%`、`_` 按字面搜索。sort 只允许 created_at/email/expires_at，direction 为 asc/desc，ID 同方向作为次排序；日期 from 含、to 不含。同次列表和总数来自只读一致快照。已到期邀请直接显示 expired，不依赖维护 Worker；邮件摘要不含 Token、收件人载荷或 SMTP 内容。
 
 
 ## 浏览器页面与测试

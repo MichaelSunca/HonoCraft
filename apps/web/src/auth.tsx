@@ -2,7 +2,7 @@ import {useEffect,useState} from 'react';
 import {useForm} from 'react-hook-form';
 import {Link,useLocation,useNavigate} from 'react-router';
 import {useTranslation} from 'react-i18next';
-import {useQuery} from '@tanstack/react-query';
+import {useQuery,useQueryClient} from '@tanstack/react-query';
 import {z} from 'zod';
 import {CompleteInvitationSchema,EmailRequestSchema,LoginSchema,RegisterSchema,ResetPasswordSchema,TokenRequestSchema} from '@honocraft/contracts/common';
 import {InvitationPreviewSchema,MeSchema,PublicSettingsSchema} from '@honocraft/contracts/http';
@@ -18,7 +18,7 @@ const submitLabel:Record<Mode,MessageKey>={login:'login',register:'register',boo
 const paths:Record<Mode,string>={login:'/auth/login',register:'/auth/register',bootstrap:'/auth/bootstrap/complete',verify:'/auth/email/verify',forgot:'/auth/password/forgot',reset:'/auth/password/reset',invite:'/auth/invites/accept'};
 const responseSchemas={login:z.object({authenticated:z.literal(true)}),register:accepted,bootstrap:z.object({initialized:z.literal(true),login_required:z.literal(true)}),verify:z.object({verified:z.literal(true),login_required:z.literal(true)}),forgot:accepted,reset:z.object({reset:z.literal(true),login_required:z.literal(true)}),invite:z.object({accepted:z.literal(true),login_required:z.literal(true)})};
 export function AuthPage({mode}:{mode:Mode}){
-  const {t}=useTranslation(),location=useLocation(),navigate=useNavigate(),session=useSession(),preferences=usePreferences();
+  const {t}=useTranslation(),location=useLocation(),navigate=useNavigate(),session=useSession(),preferences=usePreferences(),queryClient=useQueryClient();
   const [token]=useState(()=>pageCredential(location.pathname));
   const [error,setError]=useState<unknown>(null),[message,setMessage]=useState<MessageKey|null>(null),[pending,setPending]=useState(false),[extraBusy,setExtraBusy]=useState(false);
   const [preview,setPreview]=useState<z.infer<typeof InvitationPreviewSchema>|null>(null),[previewError,setPreviewError]=useState<unknown>(null),[previewAttempt,setPreviewAttempt]=useState(0);
@@ -47,6 +47,7 @@ export function AuthPage({mode}:{mode:Mode}){
       if(mode==='register'||mode==='forgot'){setMessage('inbox');return;}
       discardCredential();
       if(mode==='reset'){session.end('resetDone');return;}
+      if(mode==='bootstrap')queryClient.removeQueries({queryKey:['public','settings'],exact:true});
       session.announce(mode==='bootstrap'?'initialized':mode==='invite'?'invitationAccepted':'verified');navigate('/login',{replace:true});
     }catch(cause){setError(cause);if(cause instanceof ApiError&&cause.code==='EMAIL_VERIFICATION_REQUIRED')setPending(true);}
     finally{form.resetField('password');form.resetField('confirm');}

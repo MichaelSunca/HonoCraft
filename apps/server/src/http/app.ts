@@ -28,6 +28,9 @@ import { createClientIpResolver } from './security.js';
 import {createSessionManagement} from '../modules/auth/session-management.js';
 import {createAccountSecurity} from '../modules/auth/account-security.js';
 import {createPublicInvitationService} from '../modules/invitations/public.js';
+import {createInvitationManagement} from '../modules/invitations/management.js';
+import {createInvitationQueries} from '../modules/invitations/queries.js';
+import {InvitationActionSchema} from '@honocraft/contracts/invitations';
 
 type HttpEnvironment={Variables:{requestId:string;meta:RequestMeta;startedAt:number}};
 export type AppDependencies={webRoot?:string;pool:Pool;config:AppConfig;passwords:PasswordService;secrets:{epoch:string;csrfKey:Buffer;digestKey:DigestKey;mailKeyring:Keyring}};
@@ -36,6 +39,7 @@ export function createHttpApp({pool,config,passwords,secrets,webRoot}:AppDepende
   const resolveIp=createClientIpResolver(config.trustedProxyCidrs);
   const publicAuth=createPublicAuthService(pool,{epoch:secrets.epoch,digestKey:secrets.digestKey.key,mailKeyring:secrets.mailKeyring},passwords);
   const invitations=createPublicInvitationService(pool,{epoch:secrets.epoch,digestKey:secrets.digestKey.key},passwords);
+  const invitationManagement=createInvitationManagement(pool,secrets),invitationQueries=createInvitationQueries(pool,secrets.epoch);
   const login=createLoginService(pool,{epoch:secrets.epoch,digestKey:secrets.digestKey.key},passwords);
   const mutate=createMutationGateway(pool,secrets,{'me.profile.update':profileMutation,'auth.logout':logoutMutation});
   const sessions=createSessionManagement(pool,secrets),accountSecurity=createAccountSecurity(pool,secrets,passwords);
@@ -108,6 +112,19 @@ export function createHttpApp({pool,config,passwords,secrets,webRoot}:AppDepende
     setCookie(c,config.sessionCookieName,result.token,cookieOptions);
     return c.json({data:{authenticated:true},request_id:c.get('requestId')});
   });
+  app.get('/api/v1/invites',async c=>c.json({data:await invitationQueries.list(actorRef(c),c.req.query()),request_id:c.get('requestId')}));
+  app.get('/api/v1/invites/:id',async c=>c.json({data:await invitationQueries.get(actorRef(c),c.req.param('id')),request_id:c.get('requestId')}));
+  app.post('/api/v1/invites',async c=>{
+    const result=await invitationManagement.create(actorRef(c),await parseJson(()=>c.req.json()),c.get('meta'),c.req.header('idempotency-key'),remaining(c));
+    return c.json({data:result.data,replayed:result.replayed,request_id:c.get('requestId')},result.status as ContentfulStatusCode);
+  });
+  for(const [path,action] of [['resend',invitationManagement.resend],['revoke',invitationManagement.revoke]] as const){
+    app.post(`/api/v1/invites/:id/${path}`,async c=>{
+      const parsed=InvitationActionSchema.omit({id:true}).safeParse(await parseJson(()=>c.req.json()));if(!parsed.success)throw new AppError('VALIDATION_ERROR');
+      const result=await action(actorRef(c),{...parsed.data,id:c.req.param('id')},c.get('meta'),c.req.header('idempotency-key'),remaining(c));
+      return c.json({data:result.data,replayed:result.replayed,request_id:c.get('requestId')},result.status as ContentfulStatusCode);
+    });
+  }
   app.get('/api/v1/me',async c=>{
     const data=await getMe(pool,{token:getCookie(c,config.sessionCookieName)??'',epoch:secrets.epoch},secrets.csrfKey);
     return c.json({data,request_id:c.get('requestId')});

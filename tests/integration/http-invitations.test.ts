@@ -1,12 +1,14 @@
 import type {AddressInfo} from 'node:net';
+import {randomUUID} from 'node:crypto';
 import {afterAll,beforeAll,expect,it} from 'vitest';
 import {startTestPostgres} from '../helpers/postgres.js';
-import {initializedDatabase} from '../helpers/identity.js';
+import {identity,initializedDatabase} from '../helpers/identity.js';
 import {invitation} from '../helpers/invitation.js';
 import {migrate} from '../../apps/server/src/infrastructure/migrations.js';
 import {createPasswordService} from '../../apps/server/src/infrastructure/passwords.js';
 import {loadConfig} from '../../apps/server/src/infrastructure/config.js';
 import {startHttpServer} from '../../apps/server/src/http/app.js';
+import {csrfForSession} from '../../apps/server/src/infrastructure/crypto.js';
 let database:Awaited<ReturnType<typeof startTestPostgres>>,server:ReturnType<typeof startHttpServer>,base:string;
 const origin='https://invites.example.test',password='An invitation HTTP testing secret';
 beforeAll(async()=>{
@@ -36,4 +38,32 @@ it('requires Origin and strict JSON, with no GET credential consumption route',a
 it('reports a changed invitation without exposing its roles or inviter details',async()=>{
   const invite=await invitation(database.pool);await database.pool.query('UPDATE invite_roles SET role_version_at_issue=role_version_at_issue+1 WHERE invite_id=$1',[invite.id]);
   const response=await fetch(base+'/api/v1/auth/invites/accept',write({token:invite.token,password,display_name:'Member'}));expect(response.status).toBe(409);const body=await response.json();expect(body.error.code).toBe('INVITE_REISSUE_REQUIRED');expect(body).not.toHaveProperty('data');expect(JSON.stringify(body)).not.toContain(invite.inviter.userId);
+});
+async function adminRequest(role='admin'){
+  const actor=await identity(database.pool,role);return {actor,headers:{origin,'content-type':'application/json',cookie:`honocraft_dev_session=${actor.token}`,'x-csrf-token':csrfForSession(Buffer.alloc(32,3),actor.sessionId,'test-epoch'),'idempotency-key':randomUUID()}};
+}
+it('creates, lists, resends and revokes through authenticated versioned management routes',async()=>{
+  const {headers}=await adminRequest();
+  const created=await fetch(base+'/api/v1/invites',{method:'POST',headers,body:JSON.stringify({email:'managed@example.test'})});expect(created.status).toBe(202);const id=(await created.json()).data.id;
+  const list=await fetch(base+'/api/v1/invites?query=managed',{headers});expect(list.status).toBe(200);expect((await list.json()).data).toMatchObject({total:1,items:[{id,status:'pending',mail:{status:'queued'},allowed_actions:['resend','revoke']}]});
+  const detail=await fetch(base+'/api/v1/invites/'+id,{headers});expect(detail.status).toBe(200);expect((await detail.json()).data.version).toBe(1);
+  await database.pool.query("UPDATE rate_limit_buckets SET last_accepted_at=clock_timestamp()-interval '2 minutes'");
+  const resend=await fetch(base+'/api/v1/invites/'+id+'/resend',{method:'POST',headers,body:JSON.stringify({expected_version:1,confirmation:{target_id:id,reason:'Resend the invitation'}})});expect(resend.status).toBe(202);expect((await resend.json()).data.version).toBe(2);
+  const input={expected_version:2,confirmation:{target_id:id,reason:'Revoke the invitation'}};
+  const revoked=await fetch(base+'/api/v1/invites/'+id+'/revoke',{method:'POST',headers,body:JSON.stringify(input)});expect(revoked.status).toBe(200);expect((await revoked.json()).data).toMatchObject({id,status:'revoked',version:3});
+  const replay=await fetch(base+'/api/v1/invites/'+id+'/revoke',{method:'POST',headers,body:JSON.stringify(input)});expect(replay.status).toBe(200);expect((await replay.json()).replayed).toBe(true);
+});
+it('denies management to ordinary members and forbids overwriting the path ID from JSON',async()=>{
+  const member=await adminRequest('user'),admin=await adminRequest();
+  expect((await fetch(base+'/api/v1/invites',{headers:member.headers})).status).toBe(403);
+  expect((await fetch(base+'/api/v1/invites',{method:'POST',headers:member.headers,body:JSON.stringify({email:'forbidden@example.test'})})).status).toBe(403);
+  const invite=await invitation(database.pool);
+  const response=await fetch(base+'/api/v1/invites/'+invite.id+'/revoke',{method:'POST',headers:admin.headers,body:JSON.stringify({id:randomUUID(),expected_version:1,confirmation:{target_id:invite.id,reason:'No override'}})});expect(response.status).toBe(422);
+  const unsupported=await fetch(base+'/api/v1/invites?sort=token_hash',{headers:admin.headers});expect(unsupported.status).toBe(422);
+});
+it('requires CSRF and an idempotency key before creating an invitation',async()=>{
+  const {headers}=await adminRequest();
+  const missingCsrf=await fetch(base+'/api/v1/invites',{method:'POST',headers:{...headers,'x-csrf-token':''},body:JSON.stringify({email:'guarded@example.test'})});expect(missingCsrf.status).toBe(403);
+  const missingKey=await fetch(base+'/api/v1/invites',{method:'POST',headers:{...headers,'idempotency-key':''},body:JSON.stringify({email:'guarded@example.test'})});expect(missingKey.status).toBe(422);
+  expect((await database.pool.query("SELECT id FROM invites WHERE normalized_email='guarded@example.test'")).rowCount).toBe(0);
 });
