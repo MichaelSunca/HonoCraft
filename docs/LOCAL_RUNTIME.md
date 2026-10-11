@@ -1,6 +1,6 @@
-# 当前服务端运行说明
+# 当前本地运行说明
 
-当前交付的是 P0 开发中的服务端入口，前端、初始化页面及完整账号管理仍待交付。`start:web` / `start:worker` 暂时通过 tsx 运行源码，尚不能替代最终编译后的生产部署。
+当前交付的是 P0 开发中的服务端、邮件 Worker、认证及个人资料页面；完整账号与后台管理仍待交付。`start:web` / `start:worker` 暂时通过 tsx 运行源码，尚不能替代最终编译后的生产部署。
 
 ## 首次密钥准备
 
@@ -42,11 +42,12 @@ NODE
 3. 准备上述秘密，执行 `pnpm env:check -- --mode=development`。
 4. 使用迁移账号执行 `pnpm db:migrate`，给应用登录账号授予 `honocraft_web` 角色。应用运行账号不得使用迁移账号的高权限。
 5. 当前保持 `EXAMPLE_NOTES_ENABLED=false`，与现有数据库目录一致；示例模块的显式目录迁移后续交付。
-6. 分别执行 `pnpm start:web` 与 `pnpm start:worker`；开发时也可分别用 `pnpm dev:server` 与 `pnpm dev:worker` 监听源码。Worker 必须使用独立的 `WORKER_DATABASE_URL`，对应登录账号只授予 `honocraft_worker` 运行角色。
+6. 执行 `pnpm build:web` 生成同源页面资源；修改前端源码后重新构建。
+7. 分别执行 `pnpm start:web` 与 `pnpm start:worker`；开发时也可分别用 `pnpm dev:server` 与 `pnpm dev:worker` 监听源码。Worker 必须使用独立的 `WORKER_DATABASE_URL`，对应登录账号只授予 `honocraft_worker` 运行角色。
 
 当前监听 `127.0.0.1:$PORT`。生产配置仍要求 HTTPS PUBLIC_ORIGIN，应在同机可信反向代理后使用；容器绑定与部署方案尚待交付。`Web ready` 只表示启动检查和监听成功，不表示全部 P0 功能或外部 SMTP 已验证。
 
-可读接口包括 `/health/live`、`/health/ready`、`/api/v1/public/settings`。未初始化时普通 API 返回 `SYSTEM_NOT_INITIALIZED`，不创建默认账号。本机签发命令已提供，浏览器设密页面尚未提供，因此这里不宣称完整快速开始已经可用。
+可读接口包括 `/health/live`、`/health/ready`、`/api/v1/public/settings`。未初始化时普通 API 返回 `SYSTEM_NOT_INITIALIZED`，不创建默认账号。本机签发后，打开 Worker 投递的邮件链接即可在 `/bootstrap` 设置管理员名称和密码；完成后单独登录。运行时若缺少 `apps/web/dist/index.html`，仅提供 API，因此需先构建前端。
 
 启动会验证外部秘密、密码数据、PostgreSQL 17、全部迁移校验和与权限目录；Web 不使用环境中的迁移、维护或 Worker 连接字符串。生产应分别注入各进程实际需要的环境变量，避免把运维凭证传给 Web。SIGINT/SIGTERM 停止接收请求、等待进行中的连接并关闭数据库池，最长 30 秒。
 
@@ -81,7 +82,7 @@ Worker 每秒轮询，单进程最多两个活动投递、数据库池最多 5 �
 
 ## 已接入的公开认证接口
 
-在已初始化实例上，以下同源 JSON POST 接口可用；所有请求须携带与 PUBLIC_ORIGIN 一致的 Origin，遵守大小和来源限流。页面仍待实现，接口通过真实 HTTP 测试验证。
+在已初始化实例上，以下同源 JSON POST 接口可用；所有请求须携带与 PUBLIC_ORIGIN 一致的 Origin，遵守大小和来源限流。相应页面已接入同源 API，接口及主要页面流程使用真实 HTTP / Chromium 测试验证。
 
 | 路径（相对 `/api/v1/auth`） | 输入 | 成功结果 |
 | --- | --- | --- |
@@ -94,3 +95,16 @@ Worker 每秒轮询，单进程最多两个活动投递、数据库池最多 5 �
 注册保存当时的默认角色，邮箱验证不会改用新的默认角色；角色后来不再合格则拒绝激活。重复注册不覆盖已有账号密码。存在有效邮箱修正请求时，不重发或消费原邮箱验证链接。
 
 找回密码对不存在、Pending、禁用和有效账号返回相同响应；只有有效且已验证的本地密码账号会入队重置邮件。邮箱特定发送额度内部抑制，来源 IP 超额返回 429。重置凭证用途、版本、邮箱、epoch 和当前用户状态均在提交事务中重查；成功时消费凭证、撤销其他重置/恢复凭证和会话、记录审计、入队安全通知，失败则一起回滚。
+
+
+## 浏览器页面与测试
+
+当前可用 `/login`、`/register`、`/bootstrap`、`/verify-email`、`/forgot-password`、`/reset-password`、`/` 和 `/profile`，支持中文/英文、浅色/深色/系统外观。注册入口遵守公开设置；管理员后台、会话列表等页面仍待实现。
+
+邮件凭证从 fragment 进入当前页面内存后立即清除地址栏；打开页面不消费凭证，必须主动提交。刷新或离开页面后需重新打开原始邮件。账号切换、退出、密码重置和受保护请求 401 清除保护缓存及草稿，标签页通过不含凭证的 BroadcastChannel 信号同步失效。退出网络失败会保留“尚未确认”提示并提供重试，不声称服务器会话已撤销。
+
+个人资料提交使用服务端版本；409 时保留草稿并展示最新值，用户确认最新版本后再次提交。语言和外观的页头切换仅保存在当前页面内存；个人资料中的偏好通过保存持久化到账号。
+
+`pnpm test:e2e` 先构建前端，再启动隔离 PostgreSQL 与真实 HTTP 服务运行 Chromium；不依赖开发者 `.env` 或业务数据库。首次运行使用 `pnpm exec playwright install --with-deps chromium` 安装浏览器及系统依赖，Linux 截图还需 CJK 字体（例如 Noto CJK）。浏览器资源可通过 `PLAYWRIGHT_BROWSERS_PATH` 自定义；受限环境可使用已准备的共享库和 fontconfig 配置，勿将这些机器路径写入应用配置。
+
+测试关闭 trace，失败截图在忽略的 `test-results/`，可视检查截图在 `.local/previews/`；截图只使用隔离测试数据。未运行完整 P0、Docker、备份恢复与性能验收。

@@ -1,11 +1,10 @@
 import { z } from 'zod';
 import { AppError } from '@honocraft/contracts/errors';
-import { ProfileUpdateSchema, DisplayNameSchema, LocaleSchema, ThemeSchema } from '@honocraft/contracts/common';
+import { ProfileUpdateSchema } from '@honocraft/contracts/common';
 import { defineMutation } from '../access/mutation-gateway.js';
 
-export const SelfProfileSchema=z.strictObject({
-  id:z.uuid(),display_name:DisplayNameSchema,locale:LocaleSchema.nullable(),theme:ThemeSchema.nullable(),version:z.number().int().positive(),
-});
+import {SelfProfileSchema} from '@honocraft/contracts/http';
+export {SelfProfileSchema};
 export const profileMutation=defineMutation({
   input:ProfileUpdateSchema,output:SelfProfileSchema,mode:'shared',permission:null,recentAuth:false,auditAction:'users.profile.updated',
   resolveLocks:async()=>({userIds:[],roleIds:[]}),

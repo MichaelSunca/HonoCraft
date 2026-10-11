@@ -9,10 +9,10 @@
 项目处于 P0 开发阶段，尚未形成可运行的完整后台。
 
 - **设计文档**：已提供产品需求、架构设计和详细设计。
-- **已有代码**：工作区配置、共享数据契约与权限目录、配置校验、数据库迁移与事务封装、权限策略、审计、幂等、共享限流、Argon2 密码与会话服务，以及登录、注册、邮箱验证/重发、密码找回/重置、本人资料、退出和初始化完成的 HTTP 接口；已实现加密邮件 outbox、投递租约/重试、SMTP 适配、投递前凭证复核、常驻 Worker、通知发送节流和本机初始化命令。已有单元测试、真实 PostgreSQL、HTTP 和进程集成测试。
-- **待完成**：初始化及其他前端页面、近期验证/本人改密/会话管理/邀请/邮箱变更、Worker 到期对象/文件/留存清理、管理接口、前端页面，以及构建、部署、恢复和端到端验收。
+- **已有代码**：工作区配置、共享数据契约与权限目录、配置校验、数据库迁移与事务封装、权限策略、审计、幂等、共享限流、Argon2 密码与会话服务，以及登录、注册、邮箱验证/重发、密码找回/重置、本人资料、退出和初始化完成的 HTTP 接口；已实现加密邮件 outbox、投递租约/重试、SMTP 适配、投递前凭证复核、常驻 Worker、通知发送节流和本机初始化命令。已有中英文认证及个人资料页面，以及单元测试、真实 PostgreSQL、HTTP、进程和浏览器集成测试。
+- **待完成**：近期验证/本人改密/会话管理/邀请/邮箱变更、Worker 到期对象/文件/留存清理、管理接口及管理页面，以及完整构建、部署、恢复和 P0 端到端验收。
 
-目前可用 `pnpm start:web` / `pnpm start:worker` 分别启动服务端和邮件 Worker，`pnpm dev:server` / `pnpm dev:worker` 监听源码变化，`pnpm ops:init` 执行本机初始化。这些入口暂时使用 tsx 运行源码，需要开发依赖。尚无前端，也没有完整的 `dev`、`build` 和生产镜像交付。`test:e2e` 仅预留命令，尚未提供端到端用例。设计文档中的功能与验收指标是交付目标，不代表当前实现已全部通过验收。
+目前可用 `pnpm start:web` / `pnpm start:worker` 分别启动服务端和邮件 Worker，`pnpm dev:server` / `pnpm dev:worker` 监听源码变化，`pnpm ops:init` 执行本机初始化。这些入口暂时使用 tsx 运行源码，需要开发依赖。执行 `pnpm build:web` 后，Web 同源提供认证页面及个人工作台。尚无完整的 `dev`、服务端编译 `build` 和生产镜像交付；`pnpm test:e2e` 会构建前端并运行 Chromium 浏览器用例。设计文档中的功能与验收指标是交付目标，不代表当前实现已全部通过验收。
 
 ## 文档导航
 
@@ -38,7 +38,7 @@
 | 前端 | React 19、Vite、React Router、TanStack Query、React Hook Form、Tailwind CSS、i18next |
 | 安全与媒体 | Argon2、Node.js Crypto、Sharp |
 | 邮件 | Nodemailer；设计采用数据库邮件任务与独立 Worker |
-| 检查与测试 | ESLint、TypeScript、Vitest；计划使用 Playwright 完成端到端验收 |
+| 检查与测试 | ESLint、TypeScript、Vitest、Playwright（部分认证与个人资料流程已覆盖） |
 
 架构采用模块化单体、同源浏览器会话，以及共享 PostgreSQL 的 Web / Worker 进程。部署设计见架构与详细设计文档。
 
@@ -47,7 +47,7 @@
 ```text
 apps/
   server/                 服务端配置、基础设施与业务模块
-  web/                    前端工作区，目前仅配置依赖
+  web/                    React 认证、个人工作台与资料页面
 packages/
   contracts/              共享数据校验、错误定义与权限目录
 db/
@@ -57,6 +57,7 @@ data/passwords/           离线密码阻断集、来源清单及上游许可
 tests/
   unit/                   单元测试
   integration/            数据库集成测试
+  e2e/                    真实 Chromium 与 PostgreSQL 页面流程
   helpers/                临时 PostgreSQL 测试集群工具
 docs/
   superpowers/specs/      PRD、架构与详细设计
@@ -96,6 +97,15 @@ pnpm test
 
 # 真实 PostgreSQL 集成测试
 pnpm test:integration
+
+# 前端生产资源构建
+pnpm build:web
+
+# 首次安装测试浏览器及 Linux 依赖（需要相应系统权限）
+pnpm exec playwright install --with-deps chromium
+
+# 构建并执行真实浏览器流程
+pnpm test:e2e
 ```
 
 集成测试会在 `.local/tests/` 创建隔离的 PostgreSQL 17 临时集群，使用本地端口，并在正常结束时清理。无需预先启动数据库服务，也不使用 `.env` 中的业务数据库连接。测试覆盖配置、契约、权限、加密、迁移约束及事务行为；完整 P0 验收仍待完成。

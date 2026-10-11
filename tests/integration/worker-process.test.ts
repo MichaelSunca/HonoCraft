@@ -39,7 +39,7 @@ function launch(){
   return {ready:()=>until(()=>{if(child!.exitCode!==null)throw new Error('Worker exited: '+output);return output.includes('Worker ready');}),exited,output:()=>output};
 }
 it('caps active deliveries at two, records a safe heartbeat and drains only claimed work on SIGTERM',async()=>{
-  for(let i=0;i<4;i++)await enqueue();let process=launch();await process.ready();await until(()=>smtp.messages.length===2);
+  for(let i=0;i<4;i++)await enqueue();let process=launch();try{await process.ready();await until(()=>smtp.messages.length===2);}catch(error){console.info('initial worker diagnostic',process.output(),(await database.pool.query('SELECT status,attempts,error_code,next_attempt_at,clock_timestamp() FROM email_tasks')).rows);throw error;}
   const states=(await database.pool.query('SELECT status,count(*)::int n FROM email_tasks GROUP BY status ORDER BY status')).rows;
   expect(states).toEqual([{status:'queued',n:2},{status:'sending',n:2}]);
   const beat=(await database.pool.query('SELECT app_version,credential_epoch_digest FROM worker_heartbeats')).rows;

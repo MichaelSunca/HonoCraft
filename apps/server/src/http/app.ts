@@ -4,6 +4,7 @@ import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { getCookie,setCookie,deleteCookie } from 'hono/cookie';
 import { serve } from '@hono/node-server';
+import {serveStatic} from '@hono/node-server/serve-static';
 import { getConnInfo } from '@hono/node-server/conninfo';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import type { Pool } from 'pg';
@@ -26,8 +27,8 @@ import { getMe } from '../modules/users/me.js';
 import { createClientIpResolver } from './security.js';
 
 type HttpEnvironment={Variables:{requestId:string;meta:RequestMeta;startedAt:number}};
-export type AppDependencies={pool:Pool;config:AppConfig;passwords:PasswordService;secrets:{epoch:string;csrfKey:Buffer;digestKey:DigestKey;mailKeyring:Keyring}};
-export function createHttpApp({pool,config,passwords,secrets}:AppDependencies) {
+export type AppDependencies={webRoot?:string;pool:Pool;config:AppConfig;passwords:PasswordService;secrets:{epoch:string;csrfKey:Buffer;digestKey:DigestKey;mailKeyring:Keyring}};
+export function createHttpApp({pool,config,passwords,secrets,webRoot}:AppDependencies) {
   const app=new Hono<HttpEnvironment>();
   const resolveIp=createClientIpResolver(config.trustedProxyCidrs);
   const publicAuth=createPublicAuthService(pool,{epoch:secrets.epoch,digestKey:secrets.digestKey.key,mailKeyring:secrets.mailKeyring},passwords);
@@ -119,6 +120,12 @@ export function createHttpApp({pool,config,passwords,secrets}:AppDependencies) {
     deleteCookie(c,config.sessionCookieName,cookieOptions);
     return c.json({data:{logged_out:true},request_id:c.get('requestId')});
   });
+  if(webRoot){
+    app.get('/assets/*',serveStatic({root:webRoot}));
+    for(const route of ['/','/login','/register','/bootstrap','/verify-email','/forgot-password','/reset-password','/profile','/403','/404','/unavailable']){
+      app.get(route,serveStatic({root:webRoot,path:'index.html'}));
+    }
+  }
   return app;
 }
 async function parseJson(read:()=>Promise<unknown>) {

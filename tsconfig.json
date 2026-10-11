@@ -1,11 +1,37 @@
 {
   "compilerOptions": {
-    "target": "ES2023", "lib": ["ES2023", "DOM", "DOM.Iterable"],
-    "module": "ESNext", "moduleResolution": "Bundler", "jsx": "react-jsx",
-    "strict": true, "noUncheckedIndexedAccess": true, "exactOptionalPropertyTypes": true,
-    "esModuleInterop": true, "resolveJsonModule": true, "skipLibCheck": true,
-    "noEmit": true, "types": ["node"]
+    "target": "ES2023",
+    "lib": [
+      "ES2023",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "types": [
+      "node"
+    ]
   },
-  "include": ["apps", "packages", "scripts", "tests", "vitest.config.ts"],
-  "exclude": ["node_modules", "dist", ".tools", ".local"]
+  "include": [
+    "apps",
+    "packages",
+    "scripts",
+    "tests",
+    "vitest.config.ts",
+    "playwright.config.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    ".tools",
+    ".local"
+  ]
 }

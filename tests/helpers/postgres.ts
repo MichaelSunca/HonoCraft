@@ -8,7 +8,7 @@ import { initdb, pg_ctl } from '@embedded-postgres/linux-x64';
 import pg from 'pg';
 const execFile = promisify(execFileCallback);
 
-async function availablePort(): Promise<number> {
+export async function availablePort(): Promise<number> {
   const server = createServer();
   await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
   const address = server.address();

@@ -1,4 +1,5 @@
 import {existsSync} from 'node:fs';
+import {fileURLToPath} from 'node:url';
 import {once} from 'node:events';
 import {ConfigurationError,loadConfig} from './infrastructure/config.js';
 import {loadSecrets} from './infrastructure/secrets.js';
@@ -19,7 +20,8 @@ try {
   database=createDatabase(config.databaseUrl,config.dbPoolMax);
   await checkDatabaseCompatibility(database.pool,config.exampleNotesEnabled);
   const passwords=await createPasswordService({concurrency:config.hashConcurrency,blockedPasswords:blocklist.passwords});
-  server=startHttpServer({pool:database.pool,config,secrets,passwords});
+  const webRoot=fileURLToPath(new URL('../../web/dist/',import.meta.url));
+  server=startHttpServer({pool:database.pool,config,secrets,passwords,...(existsSync(webRoot+'index.html')?{webRoot}:{})});
   if(!server.listening)await once(server,'listening');
   const liveServer=server,liveDatabase=database;
   let stopping=false;
