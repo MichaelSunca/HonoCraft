@@ -59,7 +59,7 @@ it('metadata edits increment role version and invalidate invitations without rev
 it('permission changes revoke every assigned session and increment authorization once in the same commit',async()=>{
   const actor=await identity(database.pool,'admin'),a=await identity(database.pool),b=await identity(database.pool),id=await role('support');await database.pool.query('INSERT INTO user_roles(user_id,role_id) VALUES($1,$3),($2,$3)',[a.userId,b.userId,id]);const input={id,expected_version:1,permission_codes:['invite:read'],confirmation:confirm(id)},key=randomUUID();
   expect(await service().update(ref(actor),input,meta(),key)).toMatchObject({data:{version:2,permission_codes:['invite:read']}});
-  expect((await database.pool.query('SELECT authorization_version FROM users WHERE id=ANY($1::uuid[])',[ [a.userId,b.userId] ])).rows).toEqual([{authorization_version:2},{authorization_version:2}]);
+  expect((await database.pool.query('SELECT authorization_version,version FROM users WHERE id=ANY($1::uuid[])',[ [a.userId,b.userId] ])).rows).toEqual([{authorization_version:2,version:2},{authorization_version:2,version:2}]);
   expect((await database.pool.query('SELECT id FROM sessions WHERE user_id=ANY($1::uuid[]) AND revoked_at IS NULL',[[a.userId,b.userId]])).rowCount).toBe(0);
   expect(await service().update(ref(actor),input,meta(),key)).toMatchObject({replayed:true});expect((await database.pool.query('SELECT authorization_version FROM users WHERE id=$1',[a.userId])).rows[0].authorization_version).toBe(2);
 });
@@ -80,6 +80,15 @@ it('copies the effective super-admin permission catalog without copying the prot
   const actor=await identity(database.pool,'super_admin'),id='00000000-0000-4000-8000-000000000001',input={id,expected_version:1,new_code:'protected_copy',new_name:'Protected copy',confirmation:confirm(id,'super_admin')};
   await expect(service().copy(ref(actor),input,meta(),randomUUID())).rejects.toMatchObject({code:'REAUTH_REQUIRED'});await verify(actor);
   const result=RoleDtoSchema.parse((await service().copy(ref(actor),input,meta(),randomUUID())).data);expect(result).toMatchObject({is_builtin:false,is_delegable:false,is_registration_default_eligible:false});expect(result.permission_codes).toContain('settings:update-security');expect(result.permission_codes).toContain('role:delegate');expect(result.permission_codes).toHaveLength(20);
+});
+it.each(['role:delegate','settings:update-security'])('rechecks %s when replaying the corresponding qualification change',async permission=>{
+  const actor=await identity(database.pool,'super_admin'),id=await role('eligibility_replay',[],false),key=randomUUID();await verify(actor);
+  const input={id,expected_version:1,is_delegable:permission==='role:delegate',is_registration_default_eligible:permission==='settings:update-security',confirmation:confirm(id,'eligibility_replay')};
+  await service().eligibility(ref(actor),input,meta(),key);
+  await database.pool.query('DELETE FROM role_permissions WHERE permission_id IN (SELECT id FROM permissions WHERE code=$1)',[permission]);
+  await database.pool.query('DELETE FROM permission_dependencies WHERE permission_id IN (SELECT id FROM permissions WHERE code=$1) OR required_permission_id IN (SELECT id FROM permissions WHERE code=$1)',[permission]);
+  await database.pool.query('DELETE FROM permissions WHERE code=$1',[permission]);
+  await expect(service().eligibility(ref(actor),input,meta(),key)).rejects.toMatchObject({code:'FORBIDDEN'});
 });
 it('qualification changes require a real verified super administrator and invalidate assigned sessions',async()=>{
   const actor=await identity(database.pool,'super_admin'),member=await identity(database.pool),id=await role('support'),input={id,expected_version:1,is_delegable:false,is_registration_default_eligible:true,confirmation:confirm(id,'support')};
@@ -103,11 +112,16 @@ it('rejects delegable or self-assignable qualifications for a reserved-permissio
 });
 it('reports blocking references without deleting relationships or silently terminating invitations',async()=>{
   const actor=await identity(database.pool,'super_admin'),id=await role('support'),invite=await invitation(database.pool,{roles:['support']});
-  await expect(service().delete(ref(actor),{id,expected_version:1,confirmation:confirm(id)},meta(),randomUUID())).rejects.toMatchObject({code:'ROLE_IN_USE',fieldErrors:{'reference_counts.pending_invites':['1']}});
+  await expect(service().delete(ref(actor),{id,expected_version:1,confirmation:confirm(id,'support')},meta(),randomUUID())).rejects.toMatchObject({code:'ROLE_IN_USE',fieldErrors:{'reference_counts.pending_invites':['1']}});
   expect((await database.pool.query('SELECT status FROM invites WHERE id=$1',[invite.id])).rows[0].status).toBe('pending');expect((await database.pool.query('SELECT role_id FROM invite_roles WHERE invite_id=$1',[invite.id])).rows[0].role_id).toBe(id);
 });
+it('requires the current role code for every deletion, including ordinary roles',async()=>{
+  const actor=await identity(database.pool,'admin'),id=await role('delete_confirmation');
+  for(const label of [undefined,'wrong_code'])await expect(service().delete(ref(actor),{id,expected_version:1,confirmation:confirm(id,label)},meta(),randomUUID())).rejects.toMatchObject({code:'VALIDATION_ERROR'});
+  expect((await database.pool.query('SELECT id FROM roles WHERE id=$1',[id])).rowCount).toBe(1);
+});
 it('deletes unreferenced roles once and reauthorizes minimal historical results after deletion',async()=>{
-  const actor=await identity(database.pool,'admin'),id=await role('support'),input={id,expected_version:1,confirmation:confirm(id)},key=randomUUID();
+  const actor=await identity(database.pool,'admin'),id=await role('support'),input={id,expected_version:1,confirmation:confirm(id,'support')},key=randomUUID();
   expect(await service().delete(ref(actor),input,meta(),key)).toMatchObject({data:{deleted:true,id}});expect(await service().delete(ref(actor),input,meta(),key)).toMatchObject({replayed:true,data:{outcome:'role_deleted',resource_id:id}});
   await database.pool.query("DELETE FROM role_permissions WHERE role_id=(SELECT id FROM roles WHERE code='admin') AND permission_id=(SELECT id FROM permissions WHERE code='role:manage')");
   await expect(service().delete(ref(actor),input,meta(),key)).rejects.toMatchObject({code:'FORBIDDEN'});
@@ -116,11 +130,22 @@ it('historical reserved scope still requires recent authentication after permiss
   const actor=await identity(database.pool,'super_admin'),id=await role('reserved_role',['role:delegate'],false);await verify(actor);const input={id,expected_version:1,permission_codes:[],confirmation:confirm(id,'reserved_role')},key=randomUUID();
   await service().update(ref(actor),input,meta(),key);await database.pool.query('UPDATE sessions SET reauthenticated_at=NULL WHERE id=$1',[actor.sessionId]);await expect(service().update(ref(actor),input,meta(),key)).rejects.toMatchObject({code:'REAUTH_REQUIRED'});
 });
-it('rolls back role permissions, user versions, sessions and idempotency when success audit fails',async()=>{
+it('records one security event for a permission change and none for metadata or replay',async()=>{
+  const actor=await identity(database.pool,'admin'),id=await role('security_events'),request=meta(),key=randomUUID();
+  await service().update(ref(actor),{id,expected_version:1,name:'Renamed',confirmation:confirm(id)},meta(),randomUUID());
+  expect((await database.pool.query("SELECT id FROM security_events WHERE event_type='access.role.permissions_changed'")).rowCount).toBe(0);
+  const input={id,expected_version:2,permission_codes:['invite:read'],confirmation:confirm(id)};
+  await service().update(ref(actor),input,request,key);await service().update(ref(actor),input,meta(),key);
+  expect((await database.pool.query("SELECT user_id,request_id,result FROM security_events WHERE event_type='access.role.permissions_changed'")).rows).toEqual([{user_id:actor.userId,request_id:request.requestId,result:'success'}]);
+});
+it.each(['audit','security'])('rolls back role permissions, user versions, sessions and idempotency when %s insertion fails',async writer=>{
   const actor=await identity(database.pool,'admin'),member=await identity(database.pool),id=await role('support');await database.pool.query('INSERT INTO user_roles(user_id,role_id) VALUES($1,$2)',[member.userId,id]);
-  await database.pool.query("CREATE FUNCTION fail_role_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='access.role.updated' AND NEW.result='success' THEN RAISE EXCEPTION 'role audit failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER fail_role_audit BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION fail_role_audit()");
-  await expect(service().update(ref(actor),{id,expected_version:1,permission_codes:['invite:read'],confirmation:confirm(id)},meta(),randomUUID())).rejects.toThrow('role audit failure');
+  const predicate=writer==='audit'?"NEW.action='access.role.updated'":"NEW.event_type='access.role.permissions_changed'",table=writer==='audit'?'audit_events':'security_events';
+  await database.pool.query(`CREATE FUNCTION fail_role_log() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF ${predicate} AND NEW.result='success' THEN RAISE EXCEPTION 'role log failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER fail_role_log BEFORE INSERT ON ${table} FOR EACH ROW EXECUTE FUNCTION fail_role_log()`);
+  await expect(service().update(ref(actor),{id,expected_version:1,permission_codes:['invite:read'],confirmation:confirm(id)},meta(),randomUUID())).rejects.toThrow('role log failure');
   expect((await database.pool.query('SELECT version FROM roles WHERE id=$1',[id])).rows[0].version).toBe(1);expect((await database.pool.query('SELECT id FROM permissions p JOIN role_permissions rp ON p.id=rp.permission_id WHERE rp.role_id=$1',[id])).rowCount).toBe(0);expect((await database.pool.query('SELECT authorization_version FROM users WHERE id=$1',[member.userId])).rows[0].authorization_version).toBe(1);expect((await database.pool.query('SELECT revoked_at FROM sessions WHERE id=$1',[member.sessionId])).rows[0].revoked_at).toBeNull();expect((await database.pool.query("SELECT id FROM idempotency_records WHERE operation='roles.update'")).rowCount).toBe(0);
+  expect((await database.pool.query('SELECT version FROM users WHERE id=$1',[member.userId])).rows[0].version).toBe(1);
+  expect((await database.pool.query("SELECT id FROM security_events WHERE event_type='access.role.permissions_changed'")).rowCount).toBe(0);
 });
 it('serializes simultaneous updates so only one expected version can commit',async()=>{
   const actor=await identity(database.pool,'admin'),other=await identity(database.pool,'admin'),id=await role('support');

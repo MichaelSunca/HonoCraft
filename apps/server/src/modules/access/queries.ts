@@ -9,7 +9,9 @@ import {assertGrantableRoles,assertRoleCopyable,assertRoleEditable,isSuperAdmin,
 
 export type RoleRow=Omit<RoleDto,'allowed_actions'|'requires_reauth_actions'>&{assigned_to_privileged:boolean};
 const projection=`r.id,r.code,r.name,r.description,r.version,r.is_builtin,r.is_delegable,r.is_registration_default_eligible,
-  COALESCE((SELECT array_agg(p.code ORDER BY p.code) FROM role_permissions rp JOIN permissions p ON p.id=rp.permission_id WHERE rp.role_id=r.id),'{}') AS permission_codes,
+  CASE WHEN r.is_builtin AND r.code='super_admin' THEN
+    ARRAY(SELECT p.code FROM permissions p CROSS JOIN system_state s WHERE s.id=1 AND (p.module<>'example-note' OR s.example_notes_enabled) ORDER BY p.code)
+  ELSE COALESCE((SELECT array_agg(p.code ORDER BY p.code) FROM role_permissions rp JOIN permissions p ON p.id=rp.permission_id WHERE rp.role_id=r.id),'{}') END AS permission_codes,
   jsonb_build_object(
     'users',(SELECT count(*) FROM user_roles ur WHERE ur.role_id=r.id),
     'pending_registrations',(SELECT count(*) FROM users u WHERE u.registration_role_id=r.id),

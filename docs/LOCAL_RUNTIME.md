@@ -120,6 +120,25 @@ Worker 每秒轮询，单进程最多两个活动投递、数据库池最多 5 �
 query 去除首尾空格后为空或 2–100 码点，`%`、`_` 按字面搜索。sort 只允许 created_at/email/expires_at，direction 为 asc/desc，ID 同方向作为次排序；日期 from 含、to 不含。同次列表和总数来自只读一致快照。已到期邀请直接显示 expired，不依赖维护 Worker；邮件摘要不含 Token、收件人载荷或 SMTP 内容。
 
 
+## 角色与权限管理接口
+
+以下路径相对 `/api/v1`。角色写入要求有效会话、`role:manage`、Origin、CSRF 和 UUID `Idempotency-Key`；目标操作还检查角色范围和 `expected_version`。
+
+| 方法 / 路径 | 输入 | 成功结果 |
+| --- | --- | --- |
+| POST `/roles` | code/name/description/permission_codes；含保留权限时 confirmation | 201 RoleDto |
+| PATCH `/roles/:id` | expected_version、name/description/permission_codes 至少一项、confirmation | 200 RoleDto |
+| POST `/roles/:id/copy` | expected_version、new_code/new_name；含保留权限时 confirmation | 201 新 RoleDto |
+| DELETE `/roles/:id` | expected_version、confirmation，typed_label 必须等于角色 Code | 200 `{deleted:true,id}` |
+| PUT `/roles/:id/eligibility` | expected_version、is_delegable/is_registration_default_eligible、confirmation | 200 RoleDto |
+| GET `/permissions` | permission:read；可选 module | 200 `{catalog_version,modules:[{module,permissions:PermissionDto[]}]}` |
+
+创建/复制得到新的自定义角色，两个资格均为 false，不继承内建身份。非超级管理员创建后可能没有继续编辑该角色的资格，需要超级管理员设置委派资格。权限必须来自已启用目录，必须显式包含前置依赖；非超级管理员只能授予自身拥有的可委派权限，不能维护本人持有或分配给高权限账号的角色。
+
+含保留权限的创建/复制/修改/删除要求真正超级管理员、当前设备五分钟近期验证与角色 Code 确认。创建用 target_code，其余用 target_id；资格变更始终要求真正超级管理员和近期验证，变更委派需 role:delegate，变更注册资格需 settings:update-security。内建角色不可编辑/删除/改资格。当前注册默认及保留注册引用的角色须持续自助合格；删除存在引用时返回 ROLE_IN_USE 及引用计数，不隐式删除关系。
+
+所有角色编辑增加角色版本；权限集合或资格变化在同一事务递增关联用户编辑/授权版本、撤销会话并记录审计与安全事件。纯名称/描述编辑不撤销会话，但旧邀请因角色版本不匹配而不能接受。幂等重放返回最小操作摘要，仍复核当前及历史权限范围；客户端需刷新详情。角色和权限管理页面尚未交付。
+
 ## 浏览器页面与测试
 
 当前可用 `/login`、`/register`、`/bootstrap`、`/verify-email`、`/forgot-password`、`/reset-password`、`/accept-invite`、`/`、`/profile`、`/security`、`/sessions` 和 `/invites`，支持中文/英文、浅色/深色/系统外观。注册入口遵守公开设置；邀请管理支持分页筛选、详情、自定义角色选择、创建/重发/撤销/再次邀请、版本冲突核对及高权限近期验证；其他管理页面和邮箱变更仍待实现。

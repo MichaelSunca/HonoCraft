@@ -583,9 +583,11 @@ UserListItem：id、display_name、email、avatar_url、roles{id,code,name}、st
 | POST `/roles/:id/copy` | role:manage + 角色范围 | I、V(source role)；new_code,new_name；含保留权限时 R + confirmation（源角色 ID/Code） | 新 RoleDto / 201 |
 | DELETE `/roles/:id` | role:manage + 角色范围 | I、V(role)、confirmation；含保留权限时 R | `{deleted:true,id}` / 200 |
 | PUT `/roles/:id/eligibility` | 真 super_admin；变更委派需 role:delegate，变更注册资格需 settings:update-security；R | I、V(role)、is_delegable/is_registration_default_eligible、confirmation | RoleDto / 200 |
-| GET `/permissions` | permission:read | module 可选；返回目录版本及模块分组 | PermissionDto[] / 200 |
+| GET `/permissions` | permission:read | module 可选；返回目录版本及模块分组 | `{catalog_version,modules:[{module,permissions:PermissionDto[]}]}` / 200 |
 
 `/roles/:id/eligibility` 是在架构路由族上的明确细分，隔离保留资格字段，不允许通用 PATCH 混入。RoleDto 含资格、version、permission_codes、引用计数、allowed_actions；精确用户明细仍须 user:read。内建角色修改/删除/资格变更统一拒绝。
+
+PermissionDto 含 code/module、name_key/description_key、is_reserved/is_delegable/is_self_assignable、catalog_version 和依赖 Code 数组 dependencies。目录与模块内权限按 module/code 排序；module 严格限定为已注册模块名，已禁用模块返回空 modules。目录版本与条目来自同一个只读快照。
 
 InviteDto 返回 email、邀请人{id,display_name}、角色快照、有效状态、expires_at、version、最近邮件摘要和 allowed_actions；不返回 Token。GET `/:id` 是本轮为详情页补充的只读入口，与列表一致鉴权。
 

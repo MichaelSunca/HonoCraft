@@ -32,6 +32,7 @@ import {createInvitationManagement} from '../modules/invitations/management.js';
 import {createInvitationQueries} from '../modules/invitations/queries.js';
 import {createRoleQueries} from '../modules/access/queries.js';
 import {createRoleManagement} from '../modules/access/role-management.js';
+import {createPermissionQueries} from '../modules/access/permission-queries.js';
 import {InvitationActionSchema} from '@honocraft/contracts/invitations';
 
 type HttpEnvironment={Variables:{requestId:string;meta:RequestMeta;startedAt:number}};
@@ -44,6 +45,7 @@ export function createHttpApp({pool,config,passwords,secrets,webRoot}:AppDepende
   const invitationManagement=createInvitationManagement(pool,secrets),invitationQueries=createInvitationQueries(pool,secrets.epoch);
   const roleQueries=createRoleQueries(pool,secrets.epoch);
   const roleManagement=createRoleManagement(pool,secrets);
+  const permissionQueries=createPermissionQueries(pool,secrets.epoch);
   const login=createLoginService(pool,{epoch:secrets.epoch,digestKey:secrets.digestKey.key},passwords);
   const mutate=createMutationGateway(pool,secrets,{'me.profile.update':profileMutation,'auth.logout':logoutMutation});
   const sessions=createSessionManagement(pool,secrets),accountSecurity=createAccountSecurity(pool,secrets,passwords);
@@ -117,6 +119,7 @@ export function createHttpApp({pool,config,passwords,secrets,webRoot}:AppDepende
     return c.json({data:{authenticated:true},request_id:c.get('requestId')});
   });
   app.get('/api/v1/invites',async c=>c.json({data:await invitationQueries.list(actorRef(c),c.req.query()),request_id:c.get('requestId')}));
+  app.get('/api/v1/permissions',async c=>c.json({data:await permissionQueries.list(actorRef(c),c.req.query()),request_id:c.get('requestId')}));
   app.get('/api/v1/roles',async c=>c.json({data:await roleQueries.list(actorRef(c),c.req.query()),request_id:c.get('requestId')}));
   app.get('/api/v1/roles/:id',async c=>c.json({data:await roleQueries.get(actorRef(c),c.req.param('id')),request_id:c.get('requestId')}));
   app.post('/api/v1/roles',async c=>{

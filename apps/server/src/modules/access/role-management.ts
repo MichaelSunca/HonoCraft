@@ -11,6 +11,7 @@ import {registeredPermissionCodes} from './repository.js';
 import {projectRole,readRoleRow,type RoleRow} from './queries.js';
 import type {SessionContext} from '../auth/sessions.js';
 import type {RequestMeta,AuditEvent} from '../audit/writer.js';
+import {appendSecurityEvent} from '../audit/security-writer.js';
 
 const schemas={create:RoleCreateSchema,update:RoleUpdateSchema,copy:RoleCopySchema,delete:RoleDeleteSchema,eligibility:RoleEligibilitySchema};
 type Kind=keyof typeof schemas;
@@ -42,7 +43,12 @@ async function confirmation(tx:Tx,context:SessionContext,input:Input,code:string
   if(input.kind==='create'){
     if(!('target_code' in value)||value.target_code!==code)throw new AppError('VALIDATION_ERROR');
   }else if(!('target_id' in value)||value.target_id!==input.id)throw new AppError('VALIDATION_ERROR');
-  if(high&&value.typed_label!==code)throw new AppError('VALIDATION_ERROR');
+  if((high||input.kind==='delete')&&value.typed_label!==code)throw new AppError('VALIDATION_ERROR');
+}
+function qualificationAuthority(context:SessionContext,before:RoleSnapshot,after:RoleSnapshot){
+  if(!isSuperAdmin(context.actor))throw new AppError('FORBIDDEN');
+  if(before.isDelegable!==after.isDelegable&&!context.permissions.has('role:delegate'))throw new AppError('FORBIDDEN');
+  if(before.isRegistrationDefaultEligible!==after.isRegistrationDefaultEligible&&!context.permissions.has('settings:update-security'))throw new AppError('FORBIDDEN');
 }
 async function putPermissions(tx:Tx,id:string,codes:readonly PermissionCode[]){
   await tx.query('DELETE FROM role_permissions WHERE role_id=$1',[id]);
@@ -50,7 +56,7 @@ async function putPermissions(tx:Tx,id:string,codes:readonly PermissionCode[]){
 }
 async function mustRead(tx:Tx,id:string){const row=await readRoleRow(tx,id);if(!row)throw new AppError('NOT_FOUND');return row;}
 export function createRoleManagement(pool:Pool,secrets:Secrets){
-  function definition(kind:Kind){
+  function definition(kind:Kind,meta:RequestMeta){
     let before:RoleRow|undefined,after:RoleRow|undefined,high=false,affected:string[]=[];
     return defineMutation({input:InputSchema,output:z.union([RoleDtoSchema,RoleDeletedSchema]),mode:'exclusive',permission:'role:manage',recentAuth:false,
       auditAction:`access.role.${({create:'created',copy:'copied',update:'updated',delete:'deleted',eligibility:'qualified'} as const)[kind]}`,
@@ -76,10 +82,7 @@ export function createRoleManagement(pool:Pool,secrets:Secrets){
         await confirmation(tx,context,input,current.code,high);
         if(before.version!==input.expected_version)throw new AppError('VERSION_CONFLICT');
         if(input.kind==='update'||input.kind==='eligibility')qualifications(proposed,before.reference_counts);
-        if(input.kind==='eligibility'){
-          if(current.isDelegable!==proposed.isDelegable&&!context.permissions.has('role:delegate'))throw new AppError('FORBIDDEN');
-          if(current.isRegistrationDefaultEligible!==proposed.isRegistrationDefaultEligible&&!context.permissions.has('settings:update-security'))throw new AppError('FORBIDDEN');
-        }
+        if(input.kind==='eligibility')qualificationAuthority(context,current,proposed);
         if(input.kind==='delete'&&Object.values(before.reference_counts).some(count=>count>0))throw new AppError('ROLE_IN_USE',Object.fromEntries(Object.entries(before.reference_counts).filter(([,count])=>count>0).map(([key,count])=>['reference_counts.'+key,[String(count)]])));
       },
       execute:async(tx,context,input)=>{
@@ -101,8 +104,9 @@ export function createRoleManagement(pool:Pool,secrets:Secrets){
           after=await mustRead(tx,id);
           const securityChanged=JSON.stringify(before!.permission_codes)!==JSON.stringify(after.permission_codes)||before!.is_delegable!==after.is_delegable||before!.is_registration_default_eligible!==after.is_registration_default_eligible;
           if(securityChanged){
-            affected=(await tx.query<{id:string}>('UPDATE users SET authorization_version=authorization_version+1 WHERE id IN (SELECT user_id FROM user_roles WHERE role_id=$1) RETURNING id',[id])).rows.map(row=>row.id);
+            affected=(await tx.query<{id:string}>('UPDATE users SET authorization_version=authorization_version+1,version=version+1,updated_at=clock_timestamp() WHERE id IN (SELECT user_id FROM user_roles WHERE role_id=$1) RETURNING id',[id])).rows.map(row=>row.id);
             await tx.query("UPDATE sessions SET revoked_at=clock_timestamp(),revoked_reason='role_changed' WHERE user_id=ANY($1::uuid[]) AND revoked_at IS NULL",[affected]);
+            await appendSecurityEvent(tx,{userId:context.actor.userId,type:'access.role.permissions_changed',result:'success',reasonCode:null,targetDigest:null,meta});
           }
         }
         const creating=input.kind==='create'||input.kind==='copy',oldPermissions=creating?[]:before?.permission_codes??[],newPermissions=after?.permission_codes??[];
@@ -116,6 +120,7 @@ export function createRoleManagement(pool:Pool,secrets:Secrets){
       idempotency:{policySchema:StoredPolicy,
         authorizeStored:async(tx,context,input,stored)=>{
           if(input.kind==='eligibility'&&!isSuperAdmin(context.actor))throw new AppError('FORBIDDEN');
+          if(input.kind==='eligibility'&&stored.before&&stored.after)qualificationAuthority(context,stored.before,stored.after);
           let historicalHigh=stored.high_risk;
           for(const role of [stored.before,stored.after])if(role){await codesAllowed(tx,context,role.permissionCodes);historicalHigh ||=reserved(role.permissionCodes);}
           if(stored.before){
@@ -135,7 +140,7 @@ export function createRoleManagement(pool:Pool,secrets:Secrets){
   }
   async function run(kind:Kind,ref:Ref,raw:unknown,meta:RequestMeta,key?:string,budget?:number){
     const parsed=schemas[kind].safeParse(raw);if(!parsed.success)throw new AppError('VALIDATION_ERROR');
-    return createMutationGateway(pool,secrets,{[`roles.${kind}`]:definition(kind)})(`roles.${kind}`,ref,{...parsed.data,kind},meta,key,budget);
+    return createMutationGateway(pool,secrets,{[`roles.${kind}`]:definition(kind,meta)})(`roles.${kind}`,ref,{...parsed.data,kind},meta,key,budget);
   }
   return {
     create:(ref:Ref,input:unknown,meta:RequestMeta,key?:string,budget?:number)=>run('create',ref,input,meta,key,budget),
