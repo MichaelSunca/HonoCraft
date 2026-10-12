@@ -55,6 +55,20 @@ it('supplies authorized role choices with bounded strict filters and private ref
   expect((await fetch(base+'/api/v1/roles/'+randomUUID(),{headers:member.headers})).status).toBe(403);
   expect((await fetch(base+'/api/v1/roles/'+randomUUID(),{headers})).status).toBe(404);
 });
+it('manages custom roles through versioned routes while keeping identity and qualification fields separate',async()=>{
+  const {actor,headers}=await adminRequest('super_admin');
+  const create=await fetch(base+'/api/v1/roles',{method:'POST',headers,body:JSON.stringify({code:'http_support',name:'Support',description:'Support team',permission_codes:[]})});expect(create.status).toBe(201);
+  const role=(await create.json()).data;expect(role).toMatchObject({code:'http_support',is_builtin:false,is_delegable:false,is_registration_default_eligible:false,version:1});
+  const confirmation={target_id:role.id,typed_label:'http_support',reason:'Configure the support team'};
+  const edited=await fetch(base+'/api/v1/roles/'+role.id,{method:'PATCH',headers,body:JSON.stringify({expected_version:1,name:'Support team',confirmation})});expect(edited.status).toBe(200);expect((await edited.json()).data.version).toBe(2);
+  const forbiddenField=await fetch(base+'/api/v1/roles/'+role.id,{method:'PATCH',headers,body:JSON.stringify({expected_version:2,is_delegable:true,confirmation})});expect(forbiddenField.status).toBe(422);
+  await database.pool.query("UPDATE sessions SET reauthenticated_at=clock_timestamp()-interval '1 minute' WHERE id=$1",[actor.sessionId]);
+  const qualified=await fetch(base+'/api/v1/roles/'+role.id+'/eligibility',{method:'PUT',headers,body:JSON.stringify({expected_version:2,is_delegable:true,is_registration_default_eligible:true,confirmation})});expect(qualified.status).toBe(200);expect((await qualified.json()).data).toMatchObject({version:3,is_delegable:true,is_registration_default_eligible:true});
+  const copied=await fetch(base+'/api/v1/roles/'+role.id+'/copy',{method:'POST',headers,body:JSON.stringify({expected_version:3,new_code:'http_support_copy',new_name:'Support copy'})});expect(copied.status).toBe(201);const copy=(await copied.json()).data;expect(copy).toMatchObject({is_builtin:false,is_delegable:false,is_registration_default_eligible:false});
+  const input={expected_version:1,confirmation:{target_id:copy.id,reason:'Unused copy'}};
+  const deleted=await fetch(base+'/api/v1/roles/'+copy.id,{method:'DELETE',headers,body:JSON.stringify(input)});expect(deleted.status).toBe(200);expect((await deleted.json()).data).toEqual({deleted:true,id:copy.id});
+  const replay=await fetch(base+'/api/v1/roles/'+copy.id,{method:'DELETE',headers,body:JSON.stringify(input)});expect(replay.status).toBe(200);expect((await replay.json()).replayed).toBe(true);
+});
 it('creates, lists, resends and revokes through authenticated versioned management routes',async()=>{
   const {headers}=await adminRequest();
   const created=await fetch(base+'/api/v1/invites',{method:'POST',headers,body:JSON.stringify({email:'managed@example.test'})});expect(created.status).toBe(202);const id=(await created.json()).data.id;

@@ -31,6 +31,7 @@ import {createPublicInvitationService} from '../modules/invitations/public.js';
 import {createInvitationManagement} from '../modules/invitations/management.js';
 import {createInvitationQueries} from '../modules/invitations/queries.js';
 import {createRoleQueries} from '../modules/access/queries.js';
+import {createRoleManagement} from '../modules/access/role-management.js';
 import {InvitationActionSchema} from '@honocraft/contracts/invitations';
 
 type HttpEnvironment={Variables:{requestId:string;meta:RequestMeta;startedAt:number}};
@@ -42,6 +43,7 @@ export function createHttpApp({pool,config,passwords,secrets,webRoot}:AppDepende
   const invitations=createPublicInvitationService(pool,{epoch:secrets.epoch,digestKey:secrets.digestKey.key},passwords);
   const invitationManagement=createInvitationManagement(pool,secrets),invitationQueries=createInvitationQueries(pool,secrets.epoch);
   const roleQueries=createRoleQueries(pool,secrets.epoch);
+  const roleManagement=createRoleManagement(pool,secrets);
   const login=createLoginService(pool,{epoch:secrets.epoch,digestKey:secrets.digestKey.key},passwords);
   const mutate=createMutationGateway(pool,secrets,{'me.profile.update':profileMutation,'auth.logout':logoutMutation});
   const sessions=createSessionManagement(pool,secrets),accountSecurity=createAccountSecurity(pool,secrets,passwords);
@@ -117,6 +119,18 @@ export function createHttpApp({pool,config,passwords,secrets,webRoot}:AppDepende
   app.get('/api/v1/invites',async c=>c.json({data:await invitationQueries.list(actorRef(c),c.req.query()),request_id:c.get('requestId')}));
   app.get('/api/v1/roles',async c=>c.json({data:await roleQueries.list(actorRef(c),c.req.query()),request_id:c.get('requestId')}));
   app.get('/api/v1/roles/:id',async c=>c.json({data:await roleQueries.get(actorRef(c),c.req.param('id')),request_id:c.get('requestId')}));
+  app.post('/api/v1/roles',async c=>{
+    const result=await roleManagement.create(actorRef(c),await parseJson(()=>c.req.json()),c.get('meta'),c.req.header('idempotency-key'),remaining(c));
+    return c.json({data:result.data,replayed:result.replayed,request_id:c.get('requestId')},result.status as ContentfulStatusCode);
+  });
+  for(const [method,suffix,action] of [['PATCH','',roleManagement.update],['DELETE','',roleManagement.delete],['POST','/copy',roleManagement.copy],['PUT','/eligibility',roleManagement.eligibility]] as const){
+    app.on(method,'/api/v1/roles/:id'+suffix,async c=>{
+      const body=z.record(z.string(),z.unknown()).safeParse(await parseJson(()=>c.req.json()));
+      if(!body.success||Object.hasOwn(body.data,'id'))throw new AppError('VALIDATION_ERROR');
+      const result=await action(actorRef(c),{...body.data,id:c.req.param('id')},c.get('meta'),c.req.header('idempotency-key'),remaining(c));
+      return c.json({data:result.data,replayed:result.replayed,request_id:c.get('requestId')},result.status as ContentfulStatusCode);
+    });
+  }
   app.get('/api/v1/invites/:id',async c=>c.json({data:await invitationQueries.get(actorRef(c),c.req.param('id')),request_id:c.get('requestId')}));
   app.post('/api/v1/invites',async c=>{
     const result=await invitationManagement.create(actorRef(c),await parseJson(()=>c.req.json()),c.get('meta'),c.req.header('idempotency-key'),remaining(c));

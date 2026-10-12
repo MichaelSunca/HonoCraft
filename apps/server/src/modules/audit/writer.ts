@@ -15,6 +15,8 @@ const maskedEmail=z.string().max(254).refine(value=>value.includes('*'));
 const changesSchema=z.strictObject({
   before_version:z.number().int().positive().optional(), after_version:z.number().int().positive().optional(),
   affected_count:z.number().int().nonnegative().optional(),
+  is_delegable_before:z.boolean().optional(),is_delegable_after:z.boolean().optional(),
+  is_registration_default_eligible_before:z.boolean().optional(),is_registration_default_eligible_after:z.boolean().optional(),
   status_before:z.enum(['pending','active','suspended','deleted','accepted','revoked','expired']).optional(),
   status_after:z.enum(['pending','active','suspended','deleted','accepted','revoked','expired']).optional(),
   role_ids_before:z.array(z.uuid()).max(100).optional(), role_ids_after:z.array(z.uuid()).max(100).optional(),

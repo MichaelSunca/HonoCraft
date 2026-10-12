@@ -26,8 +26,8 @@ export async function registeredPermissionCodes(tx: Tx): Promise<ReadonlySet<Per
   return new Set(rows.map(row=>row.code));
 }
 /** Run only after the security coordination lock, before locking any sessions or aggregates. */
-export async function lockIdentityRows(tx: Tx, userIds: readonly string[], roleIds: readonly string[] = []): Promise<void> {
+export async function lockIdentityRows(tx: Tx, userIds: readonly string[], roleIds: readonly string[] = [],roleLock:'share'|'update'='share'): Promise<void> {
   await tx.query('SELECT id FROM users WHERE id=ANY($1::uuid[]) ORDER BY id FOR UPDATE', [[...new Set(userIds)].sort()]);
   await tx.query(`SELECT id FROM roles WHERE id=ANY($1::uuid[]) OR id IN
-    (SELECT role_id FROM user_roles WHERE user_id=ANY($2::uuid[])) ORDER BY id FOR SHARE`, [roleIds,userIds]);
+    (SELECT role_id FROM user_roles WHERE user_id=ANY($2::uuid[])) ORDER BY id FOR ${roleLock==='update'?'UPDATE':'SHARE'}`, [roleIds,userIds]);
 }

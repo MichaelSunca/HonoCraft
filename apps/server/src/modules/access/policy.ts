@@ -49,12 +49,13 @@ export function assertRoleCopyable(actor: AccessSnapshot, role: RoleSnapshot, as
   if (assignedToPrivileged || actor.roles.some(own => own.id === role.id) || !roleInDelegableScope(actor, role)) throw new AppError('FORBIDDEN');
 }
 export function assertPermissionDependencies(codes: readonly PermissionCode[]): void {
-  const selected = new Set(codes);
+  const selected = new Set(codes),missing=new Set<PermissionCode>();
   for (const code of codes) {
     const definition = permissionDefinitions.find(item => item.code === code);
     if (!definition) throw new AppError('VALIDATION_ERROR');
-    if (definition.dependencies.some(dependency => !selected.has(dependency))) throw new AppError('PERMISSION_DEPENDENCY_MISSING');
+    for(const dependency of definition.dependencies)if(!selected.has(dependency))missing.add(dependency);
   }
+  if(missing.size)throw new AppError('PERMISSION_DEPENDENCY_MISSING',{permission_codes:[...missing].sort()});
 }
 export function assertRegistrationRole(role: RoleSnapshot): void {
   if (!role.isRegistrationDefaultEligible || ['admin','super_admin'].includes(role.code) || role.permissionCodes.some(code => !permissionDefinitions.find(item => item.code === code)?.selfAssignable)) throw new AppError('REGISTRATION_ROLE_INVALID');

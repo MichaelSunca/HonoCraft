@@ -11,7 +11,7 @@ import { lockIdentityRows } from './repository.js';
 import { requireRecentAuthentication } from './policy.js';
 
 type AuditDetail=Pick<AuditEvent,'target'|'changes'|'reason'>;
-type Locks={userIds:readonly string[];roleIds:readonly string[]};
+type Locks={userIds:readonly string[];roleIds:readonly string[];sessionIds?:readonly string[]};
 type MutationResult<T>={data:T;audit:AuditDetail;status?:number};
 type Definition<I extends z.ZodType,O extends z.ZodType,P extends z.ZodType>={
   input:I;output:O;mode:'shared'|'exclusive';permission:PermissionCode|null;recentAuth:boolean;auditAction:string;
@@ -87,7 +87,8 @@ export function createMutationGateway<const Registry extends Record<string,Regis
         return await withTransaction(pool,definition.mode,async tx=>{
           const locator=await locateSession(tx,ref.token);
           const locks=await bound.resolveLocks(tx,locator.userId);
-          await lockIdentityRows(tx,[locator.userId,...locks.userIds],locks.roleIds);
+          await lockIdentityRows(tx,[locator.userId,...locks.userIds],locks.roleIds,definition.mode==='exclusive'?'update':'share');
+          if(locks.sessionIds)await tx.query('SELECT id FROM sessions WHERE id=ANY($1::uuid[]) ORDER BY id FOR UPDATE',[[...new Set([locator.id,...locks.sessionIds])]]);
           const context=await authenticateLockedSession(tx,locator,secrets.epoch);
           actorId=context.actor.userId;
           if(!verifyCsrf(secrets.csrfKey,context.sessionId,secrets.epoch,ref.csrfToken))throw new AppError('CSRF_INVALID');
