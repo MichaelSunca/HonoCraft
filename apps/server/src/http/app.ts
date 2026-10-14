@@ -25,6 +25,7 @@ import { createMutationGateway } from '../modules/access/mutation-gateway.js';
 import { profileMutation } from '../modules/users/profile.js';
 import { getMe } from '../modules/users/me.js';
 import {createUserQueries} from '../modules/users/queries.js';
+import {createUserManagement} from '../modules/users/management.js';
 import { createClientIpResolver } from './security.js';
 import {createSessionManagement} from '../modules/auth/session-management.js';
 import {createAccountSecurity} from '../modules/auth/account-security.js';
@@ -46,6 +47,7 @@ export function createHttpApp({pool,config,passwords,secrets,webRoot}:AppDepende
   const invitationManagement=createInvitationManagement(pool,secrets),invitationQueries=createInvitationQueries(pool,secrets.epoch);
   const roleQueries=createRoleQueries(pool,secrets.epoch);
   const userQueries=createUserQueries(pool,secrets.epoch);
+  const userManagement=createUserManagement(pool,secrets);
   const roleManagement=createRoleManagement(pool,secrets);
   const permissionQueries=createPermissionQueries(pool,secrets.epoch);
   const login=createLoginService(pool,{epoch:secrets.epoch,digestKey:secrets.digestKey.key},passwords);
@@ -124,6 +126,14 @@ export function createHttpApp({pool,config,passwords,secrets,webRoot}:AppDepende
   app.get('/api/v1/permissions',async c=>c.json({data:await permissionQueries.list(actorRef(c),c.req.query()),request_id:c.get('requestId')}));
   app.get('/api/v1/users',async c=>c.json({data:await userQueries.list(actorRef(c),c.req.query()),request_id:c.get('requestId')}));
   app.get('/api/v1/users/:id',async c=>c.json({data:await userQueries.get(actorRef(c),c.req.param('id')),request_id:c.get('requestId')}));
+  for(const [method,suffix,action] of [['PATCH','/profile',userManagement.profile],['POST','/status',userManagement.status],['DELETE','',userManagement.delete],['PUT','/roles',userManagement.roles]] as const){
+    app.on(method,'/api/v1/users/:id'+suffix,async c=>{
+      const body=z.record(z.string(),z.unknown()).safeParse(await parseJson(()=>c.req.json()));
+      if(!body.success||Object.hasOwn(body.data,'id'))throw new AppError('VALIDATION_ERROR');
+      const result=await action(actorRef(c),{...body.data,id:c.req.param('id')},c.get('meta'),c.req.header('idempotency-key'),remaining(c));
+      return c.json({data:result.data,replayed:result.replayed,request_id:c.get('requestId')},result.status as ContentfulStatusCode);
+    });
+  }
   app.get('/api/v1/roles',async c=>c.json({data:await roleQueries.list(actorRef(c),c.req.query()),request_id:c.get('requestId')}));
   app.get('/api/v1/roles/:id',async c=>c.json({data:await roleQueries.get(actorRef(c),c.req.param('id')),request_id:c.get('requestId')}));
   app.post('/api/v1/roles',async c=>{

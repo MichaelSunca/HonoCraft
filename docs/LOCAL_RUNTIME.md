@@ -141,16 +141,26 @@ query 去除首尾空格后为空或 2–100 码点，`%`、`_` 按字面搜索�
 
 `/roles`、`/roles/:id` 提供角色分页筛选、详情及操作对话框；资格设置独立于名称/权限编辑。权限依赖必须明确勾选，创建或复制后提示初始资格关闭。高风险操作先输入角色 Code；近期验证成功后仍需明确再次提交。冲突保留草稿并展示最新版本，新增引用会禁用删除；响应不确定时冻结正文并使用同一幂等键重试。`/permissions` 单独检查 permission:read，支持模块筛选、中英文名称/说明、依赖及权限属性查看。
 
-## 用户查询接口
+## 用户管理接口
 
-用户查询已提供下列 API，但用户管理页面及写操作仍待实现。
+用户管理已提供下列 API；管理页面、管理员发送密码重置和邮箱变更接口仍待实现。
 
 | API（相对 `/api/v1`） | 输入 | 结果 |
 | --- | --- | --- |
 | GET `/users` | user:read；page/page_size、query、status、role_id、created_from/to、sort、direction | items、page、page_size、total |
 | GET `/users/:id` | user:read；UUID | 用户详情、当前操作资格、近期验证要求、可见邮箱变更摘要及审计入口资格 |
+| PATCH `/users/:id/profile` | user:update；expected_version、display_name；高风险时 confirmation | id、display_name、version |
+| POST `/users/:id/status` | user:change-status；expected_version、action=suspend/enable、confirmation | id、status、version |
+| DELETE `/users/:id` | user:delete；expected_version、confirmation | id、status=deleted、version |
+| PUT `/users/:id/roles` | user:assign-role；expected_version、role_ids 完整集合（可为空）、confirmation | id、role_ids、version、login_required=true |
 
-列表默认隐藏 Deleted，显式状态筛选可查询。query 为空或 2–100 码点，`%`、`_` 按字面搜索；sort 仅 created_at/display_name/email，direction 为 asc/desc。日期范围左闭右开，排序同值用 ID 稳定分页。本人或可管理目标邮箱完整显示，范围外目标只显示首字符和域名；邮箱搜索和排序同样使用可见值，不查询隐藏地址。待变更邮箱仅本人或仍具管理资格的原发起者可见，过期项直接排除。返回操作资格表示授权和状态判断，不表示相关写接口已交付。
+列表默认隐藏 Deleted，显式状态筛选可查询。query 为空或 2–100 码点，`%`、`_` 按字面搜索；sort 仅 created_at/display_name/email，direction 为 asc/desc。日期范围左闭右开，排序同值用 ID 稳定分页。本人或可管理目标邮箱完整显示，范围外目标只显示首字符和域名；邮箱搜索和排序同样使用可见值，不查询隐藏地址。待变更邮箱仅本人或仍具管理资格的原发起者可见，过期项直接排除。返回操作资格表示授权和状态判断；接口交付范围以上表为准。
+
+所有写入需要 Origin、CSRF 和 UUID Idempotency-Key。确认结构为 `confirmation:{target_id,typed_label?,reason}`；删除和高权限操作要求 typed_label 等于锁后目标规范邮箱，高权限操作还要求真正 super_admin、user:manage-privileged 和当前设备五分钟近期验证。后台禁止修改本人角色、状态或删除本人；本人资料使用 `/me`。
+
+资料修正仅接受 display_name，递增编辑版本，使用共享安全事务，不撤销会话。角色替换仅适用于 Active，检查旧角色与完整新集合、依赖和最后可用超级管理员，递增编辑/授权版本并撤销全部会话。Pending、Suspended 不允许直接分配角色。禁用取消目标全部未消费凭证、邮箱请求、其签发的 Pending 邀请和相应邮件，并发送停用通知；启用依据邮箱是否已验证恢复 Active 或 Pending，不恢复旧凭证或会话。软删除保留邮箱占用和历史数据，清除角色/保留注册引用，将头像转为待清理状态。
+
+审计、安全事件、用户版本、撤销与通知入队在同一事务完成。版本冲突不覆盖新值；同键重放只返回最小结果摘要，重新检查当前权限、目标范围及历史角色范围/高风险要求，不重复撤销或发信。
 
 ## 浏览器页面与测试
 
