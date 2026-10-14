@@ -24,6 +24,7 @@ import { logoutMutation } from '../modules/auth/logout.js';
 import { createMutationGateway } from '../modules/access/mutation-gateway.js';
 import { profileMutation } from '../modules/users/profile.js';
 import { getMe } from '../modules/users/me.js';
+import {createUserQueries} from '../modules/users/queries.js';
 import { createClientIpResolver } from './security.js';
 import {createSessionManagement} from '../modules/auth/session-management.js';
 import {createAccountSecurity} from '../modules/auth/account-security.js';
@@ -44,6 +45,7 @@ export function createHttpApp({pool,config,passwords,secrets,webRoot}:AppDepende
   const invitations=createPublicInvitationService(pool,{epoch:secrets.epoch,digestKey:secrets.digestKey.key},passwords);
   const invitationManagement=createInvitationManagement(pool,secrets),invitationQueries=createInvitationQueries(pool,secrets.epoch);
   const roleQueries=createRoleQueries(pool,secrets.epoch);
+  const userQueries=createUserQueries(pool,secrets.epoch);
   const roleManagement=createRoleManagement(pool,secrets);
   const permissionQueries=createPermissionQueries(pool,secrets.epoch);
   const login=createLoginService(pool,{epoch:secrets.epoch,digestKey:secrets.digestKey.key},passwords);
@@ -120,6 +122,8 @@ export function createHttpApp({pool,config,passwords,secrets,webRoot}:AppDepende
   });
   app.get('/api/v1/invites',async c=>c.json({data:await invitationQueries.list(actorRef(c),c.req.query()),request_id:c.get('requestId')}));
   app.get('/api/v1/permissions',async c=>c.json({data:await permissionQueries.list(actorRef(c),c.req.query()),request_id:c.get('requestId')}));
+  app.get('/api/v1/users',async c=>c.json({data:await userQueries.list(actorRef(c),c.req.query()),request_id:c.get('requestId')}));
+  app.get('/api/v1/users/:id',async c=>c.json({data:await userQueries.get(actorRef(c),c.req.param('id')),request_id:c.get('requestId')}));
   app.get('/api/v1/roles',async c=>c.json({data:await roleQueries.list(actorRef(c),c.req.query()),request_id:c.get('requestId')}));
   app.get('/api/v1/roles/:id',async c=>c.json({data:await roleQueries.get(actorRef(c),c.req.param('id')),request_id:c.get('requestId')}));
   app.post('/api/v1/roles',async c=>{
