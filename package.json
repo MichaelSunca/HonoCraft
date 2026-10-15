@@ -22,6 +22,7 @@
     "start:worker": "tsx apps/server/src/worker-main.ts",
     "dev:worker": "tsx watch apps/server/src/worker-main.ts",
     "ops:init": "tsx scripts/ops-init.ts",
+    "ops:module": "tsx scripts/ops-module.ts",
     "build:web": "pnpm --filter @honocraft/web build"
   },
   "devDependencies": {
