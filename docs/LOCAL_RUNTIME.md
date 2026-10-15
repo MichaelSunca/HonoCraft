@@ -77,7 +77,9 @@ Worker 每秒轮询，单进程最多两个活动投递、数据库池最多 5 �
 
 安全通知独立使用数据库滚动配额，同一规范地址每分钟最多预留 5 次发送。超额只推迟任务并保留载荷，不消耗 SMTP 重试次数；Worker 无权改写登录或用户主动重发配额。SMTP 返回未知结果时无法保证邮件恰好发送一次，使用稳定 Message-ID 与任务状态诊断。
 
-待交付：每分钟凭证/邀请/邮箱请求到期维护、无引用文件回收、运行记录及日志留存清理、完整健康诊断与运维指标。
+文件回收与邮件轮询并行运行，启动时恢复并每小时执行；共用最多 5 连接的 Worker 池，不使用 Web 或迁移凭证。邮件投递被阻塞时不妨碍文件回收，退出时一并停止新回收、排空当前工作。
+
+待交付：每分钟凭证/邀请/邮箱请求到期维护、运行记录及日志留存清理、完整健康诊断与运维指标。
 
 
 ## 已接入的公开认证接口
@@ -220,7 +222,7 @@ query 去除首尾空格后为空或 2–100 码点，`%`、`_` 按字面搜索�
 
 `/settings` 导航和直接访问要求 settings:read。GET `/api/v1/settings` 返回 branding/security 两组值、各自 version、allowed_actions 和 requires_reauth_actions，不返回部署密钥。普通管理员可读取安全策略，不能提交保留操作。
 
-- PATCH `/api/v1/settings/branding` 要求 settings:update-branding、Origin/CSRF、UUID Idempotency-Key；正文完整包含 instance_name、copyright、default_locale、default_theme、timezone 和 expected_version。文件 ID 与任意 URL 不在普通更新接口内；品牌图片待专用媒体接口交付。
+- PATCH `/api/v1/settings/branding` 要求 settings:update-branding、Origin/CSRF、UUID Idempotency-Key；正文完整包含 instance_name、copyright、default_locale、default_theme、timezone 和 expected_version。文件 ID 与任意 URL 不在普通更新接口内；品牌图片使用下述专用媒体接口。
 - PATCH `/api/v1/settings/security` 要求真正的内建超级管理员、settings:update-security、当前设备五分钟近期验证、Origin/CSRF 和 UUID Idempotency-Key。提交完整安全组和 expected_version；confirmation 固定 target_id/typed_label 为 security，另附 1–500 码点 reason。字段范围见详细设计 §11.1。
 
 默认注册角色仅接受仍具注册资格、仅含可自行赋予权限且依赖完整的角色；只影响未来注册，已有 Pending 的角色引用不变。安全设置与审计、安全事件、幂等摘要和已签发会话期限收紧在同一事务完成；任一失败全部回滚。缩短后立刻放宽也不能恢复原先的更晚会话期限，即使期间没有该会话的请求。更新成功但当前会话因新期限过期时，后续读取会清除本地账号状态并转到登录页。
@@ -247,9 +249,9 @@ query 去除首尾空格后为空或 2–100 码点，`%`、`_` 按字面搜索�
 
 角色、邀请、用户管理、本人邮箱变更和设置表单共享不确定结果判定。除网络/5xx/响应无法解释外，REQUEST_IN_PROGRESS 也保持原请求和幂等键。已不确定的请求重试被近期验证、权限或 CSRF/Origin 等前置门禁拒绝时，继续保留原尝试；这些拒绝不能说明之前没有提交。验证通过后必须再次明确重试，验证期间禁用原业务提交，不能改用新键重新发信或覆盖角色版本。
 
-## 受控头像与品牌图片 API
+## 受控头像与品牌图片
 
-先运行 `pnpm db:migrate` 应用 `0005_file_variants.sql`，再启动当前版本；应用启动不会自动迁移。当前源码入口会加载 `modules/files/image-worker.mjs`，后续编译/镜像交付须保留该工作线程文件。
+先运行 `pnpm db:migrate` 应用全部迁移（含 `0005_file_variants.sql` 和 `0006_file_cleanup_index.sql`），再启动当前版本；应用启动不会自动迁移。当前源码入口会加载 `modules/files/image-worker.mjs`，后续编译/镜像交付须保留该工作线程文件。
 
 | 路径（相对 `/api/v1`） | 权限与输入 | 结果 |
 | --- | --- | --- |
@@ -262,6 +264,12 @@ query 去除首尾空格后为空或 2–100 码点，`%`、`_` 按字面搜索�
 
 所有写入均要求精确 Origin、CSRF 和 UUID Idempotency-Key。输入单文件最多 2 MiB，总请求最多 3 MiB；拒绝未知/重复字段。只接受实际 PNG/JPEG/WebP，拒绝 SVG、多帧、损坏内容及超过 1600 万解码像素。工作线程五秒硬截止、进程并发两路；头像重编码为 256×256 WebP，Logo 等比最长边 512 WebP，Favicon 64px 主 PNG 与 32px 变体。Favicon 可通过 `?size=32` 或 `?size=64` 读取；其他尺寸/Logo size 参数拒绝。
 
-存储 key 由服务器生成，不使用原文件名或客户端路径。先建主/变体 staged 元数据，再写临时文件、同步与原子 rename，最后同事务复核当前权限、组版本、租约、引用、审计和幂等。失败保留原引用，候选转为可回收；本轮尚未接入实际文件回收任务，暂存/孤立文件不会自动删除。相同键重试按原始图片摘要和版本识别，不把随机候选 ID 当作新正文；成功重放仅返回最小结果摘要，随后重读当前 me/settings。
+存储 key 由服务器生成，不使用原文件名或客户端路径。先建主/变体 staged 元数据，再写临时文件、同步与原子 rename，最后同事务复核当前权限、组版本、租约、引用、审计和幂等。失败保留原引用，候选转为可回收。相同键重试按原始图片摘要和版本识别，不把随机候选 ID 当作新正文；成功重放仅返回最小结果摘要，随后重读当前 me/settings。
 
-API 请求使用配置中的 JSON/上传两种期限（缺省 15/30 秒），超时返回 BUSY_RETRY；图片自身处理截止更早。未完成正文的早期拒绝、超限与超时会明确关闭 HTTP 连接。图片页面、浏览器文件选择、品牌展示与文件回收随后接入。
+API 请求使用配置中的 JSON/上传两种期限（缺省 15/30 秒），超时返回 BUSY_RETRY；图片自身处理截止更早。未完成正文的早期拒绝、超限与超时会明确关闭 HTTP 连接。
+
+`/profile` 提供文件选择、上传及移除确认；`/settings` 按服务端 allowed_actions 显示品牌写入口。选择文件不立即发送，成功后只展示服务器重编码图片。冲突保留已选文件，明确采用最新版本后再确认；网络结果不明冻结 File、正文和幂等键，重试同一操作。写入成功但读取失败时仅重读图片状态。未编辑的个人资料表单随本人头像版本刷新；已编辑草稿保留原版本，保存时仍须处理冲突。登录页与工作台显示当前 Logo、实例名称和 32/64 Favicon，移除后使用内置标识。
+
+Worker 每批最多锁定 100 个候选，跳过其他进程锁定的行；staged/orphaned 从最后状态变更 updated_at 满 24 小时且租约已过才可回收。锁文件后用新查询重查 users.avatar_file_id 和 branding 两项引用，不申请用户或全局安全行锁。标 deleting 与开始审计提交后，事务外逐个 unlink 主文件及变体并同步目录；元数据删除与成功审计同事务。缺失文件视为成功，IO/审计失败保留 deleting 供后续恢复；不会递归删除目录。
+
+随后流式扫描媒体目录，仅处理严格匹配服务器 UUID 文件名、mtime 满 24 小时的普通临时文件/图片/32px 变体；任何已知父元数据或当前引用都使扫描跳过。未知名称、目录和符号链接保留。每批最多尝试删除 100 个散落文件，删除前提交审计意图；若删除后进程退出或完成审计失败，意图仍可供诊断，不能把缺少完成事件当作未执行。Worker 日志只记录固定事件名和计数，不输出文件路径、图片或凭证。审计留存清理使用后续独立 maintenance 入口，文件回收仅需 runtime_worker 权限。

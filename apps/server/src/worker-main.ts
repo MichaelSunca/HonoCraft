@@ -5,6 +5,7 @@ import {createDatabase,type Database} from './infrastructure/db.js';
 import {checkDatabaseCompatibility} from './infrastructure/startup.js';
 import {createSmtpTransport} from './modules/mail/smtp.js';
 import {runMailWorker} from './modules/mail/runner.js';
+import {runFileCleanup} from './modules/files/runner.js';
 let database:Database|undefined;
 const controller=new AbortController();
 let deadline:ReturnType<typeof setTimeout>|undefined;
@@ -22,11 +23,12 @@ try{
   database=createDatabase(config.databaseUrl,5);
   await checkDatabaseCompatibility(database.pool,config.exampleNotesEnabled);
   process.once('SIGINT',stop);process.once('SIGTERM',stop);
-  await runMailWorker(database.pool,{origin:config.origin,epoch:secrets.epoch,keyring:secrets.mailKeyring,digestKey:secrets.digestKey.key},
+  const jobs=[runMailWorker(database.pool,{origin:config.origin,epoch:secrets.epoch,keyring:secrets.mailKeyring,digestKey:secrets.digestKey.key},
     createSmtpTransport(config.smtp),controller.signal,event=>{
       if(event==='ready')console.log('Worker ready');
       else console.log(JSON.stringify({event:`mail.${event}`}));
-    });
+    }),runFileCleanup(database.pool,config.fileStorageRoot,controller.signal,({event,...counts})=>console.log(JSON.stringify({event:`files.${event}`,...counts})))];
+  try{await Promise.all(jobs);}finally{controller.abort();await Promise.allSettled(jobs);}
 }catch(error){
   const safe=error instanceof ConfigurationError?error.message:
     error instanceof Error&&['DATABASE_SCHEMA_INCOMPATIBLE','PERMISSION_CATALOG_INCOMPATIBLE'].includes(error.message)?error.message:'WORKER_STARTUP_FAILED';

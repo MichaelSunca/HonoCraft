@@ -1,3 +1,4 @@
+import {randomUUID} from 'node:crypto';
 import { z } from 'zod';
 import { errorStatus } from '@honocraft/contracts/errors';
 import {AuditChangesSchema,AuditSnapshotSchema} from '@honocraft/contracts/logs';
@@ -26,11 +27,13 @@ export async function appendAudit(tx: Tx, event: unknown): Promise<string> {
   const value=eventSchema.parse(event);
   let snapshot:z.infer<typeof AuditSnapshotSchema>={};
   if(value.actor.type==='user'&&value.actor.id){const user=(await tx.query<{display_name:string}>('SELECT display_name FROM users WHERE id=$1',[value.actor.id])).rows[0];if(user)snapshot=AuditSnapshotSchema.parse({display_name:Array.from(sanitizeAuditText(user.display_name)).slice(0,80).join('')});}
-  const result=await tx.query<{id:string}>(`INSERT INTO audit_events(actor_type,actor_id,actor_snapshot,action,target_type,target_id,result,
-    reason_code,reason,changes,request_id,ip,user_agent) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,[
+  // Allocate the ID here so INSERT-only worker/maintenance roles do not need SELECT for RETURNING.
+  const id=randomUUID();
+  await tx.query(`INSERT INTO audit_events(actor_type,actor_id,actor_snapshot,action,target_type,target_id,result,
+    reason_code,reason,changes,request_id,ip,user_agent,id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,[
     value.actor.type,value.actor.id??null,snapshot,value.action,value.target.type,value.target.id??null,value.result,
     value.reasonCode??null,value.reason===undefined?null:sanitizeAuditText(value.reason),value.changes,
-    value.meta.requestId,value.meta.ip,sanitizeAuditText(value.meta.userAgent),
+    value.meta.requestId,value.meta.ip,sanitizeAuditText(value.meta.userAgent),id,
   ]);
-  return result.rows[0]!.id;
+  return id;
 }

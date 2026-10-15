@@ -13,6 +13,7 @@ import {createPasswordService} from '../../apps/server/src/infrastructure/passwo
 import {loadConfig} from '../../apps/server/src/infrastructure/config.js';
 import {startHttpServer} from '../../apps/server/src/http/app.js';
 import {csrfForSession} from '../../apps/server/src/infrastructure/crypto.js';
+import {cleanupFiles} from '../../apps/server/src/modules/files/cleanup.js';
 let database:Awaited<ReturnType<typeof startTestPostgres>>,web:pg.Pool,server:ReturnType<typeof startHttpServer>,base:string,root:string,image:Buffer;
 let fixtureConfig:ReturnType<typeof loadConfig>;
 type Actor=Awaited<ReturnType<typeof identity>>;
@@ -34,6 +35,17 @@ it('reencodes and attaches an avatar without metadata, exposes it through me, an
   const actor=await identity(database.pool),response=await upload('/me/avatar',actor);expect(response.status).toBe(200);const data=(await response.json()).data;expect(data).toMatchObject({user_version:2});expect(data.avatar_url).toMatch(/^\/api\/v1\/media\/avatars\/[a-f0-9-]{36}$/);
   const resource=await get(data.avatar_url,actor);expect(resource.status).toBe(200);expect(resource.headers.get('content-type')).toBe('image/webp');expect(resource.headers.get('cache-control')).toBe('no-store');expect(resource.headers.get('x-content-type-options')).toBe('nosniff');const decoded=await sharp(Buffer.from(await resource.arrayBuffer())).metadata();expect(decoded).toMatchObject({format:'webp',width:256,height:256});expect(decoded.exif).toBeUndefined();expect(decoded.icc).toBeUndefined();expect((await (await get('/api/v1/me',actor)).json()).data.user.avatar_url).toBe(data.avatar_url);
   const replacement=await upload('/me/avatar',actor,image,2);expect(replacement.status).toBe(200);expect((await get(data.avatar_url,actor)).status).toBe(404);expect((await database.pool.query('SELECT state FROM file_objects WHERE id=$1',[data.avatar_url.split('/').at(-1)])).rows[0].state).toBe('orphaned');expect((await remove('/me/avatar',actor,3)).status).toBe(200);expect((await (await get('/api/v1/me',actor)).json()).data.user).toMatchObject({avatar_url:null,version:4});
+});
+it('rejects a staged image reclaimed before attachment and preserves the previous brand reference',async()=>{
+  const actor=await identity(database.pool,'admin'),first=await upload('/settings/branding/logo',actor);expect(first.status).toBe(200);const original=(await first.json()).data.url as string,originalId=original.split('/').at(-1)!;
+  const lock=await database.pool.connect(),worker=new pg.Pool({connectionString:database.connectionString,options:'-c role=honocraft_worker'});let pending:Promise<Response>|undefined;
+  await lock.query('BEGIN');await lock.query("SELECT key FROM system_settings WHERE key='branding' FOR UPDATE");
+  try{
+    pending=upload('/settings/branding/logo',actor,image,2);const deadline=performance.now()+1500;let candidate:{id:string;storage_key:string}|undefined;
+    while(performance.now()<deadline){candidate=(await database.pool.query<{id:string;storage_key:string}>("SELECT id,storage_key FROM file_objects WHERE id<>$1 AND state='staged'",[originalId])).rows[0];if(candidate&&await readFile(resolve(root,candidate.storage_key)).then(()=>true,()=>false))break;await new Promise(resolve=>setTimeout(resolve,10));}
+    expect(candidate).toBeDefined();await database.pool.query("UPDATE file_objects SET updated_at=clock_timestamp()-interval '25 hours',lease_expires_at=clock_timestamp()-interval '1 minute' WHERE id=$1",[candidate!.id]);expect(await cleanupFiles(worker,root)).toEqual({claimed:1,deleted:1,failed:0});
+  }finally{await lock.query('ROLLBACK');lock.release();await worker.end();}
+  const rejected=await pending!;expect(rejected.status).toBe(422);expect((await rejected.json()).error.code).toBe('IMAGE_INVALID');expect((await get(original)).status).toBe(200);expect((await database.pool.query("SELECT version,typed_value->>'logo_file_id' AS id FROM system_settings WHERE key='branding'")).rows[0]).toEqual({version:2,id:originalId});
 });
 it('checks current avatar visibility rather than granting access to every authenticated account',async()=>{
   const owner=await identity(database.pool),other=await identity(database.pool),admin=await identity(database.pool,'admin'),superAdmin=await identity(database.pool,'super_admin');const response=await upload('/me/avatar',owner);expect(response.status).toBe(200);const {avatar_url:url}=(await response.json()).data;expect((await get(url)).status).toBe(401);expect((await get(url,other)).status).toBe(404);expect((await get(url,admin)).status).toBe(200);

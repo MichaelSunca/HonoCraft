@@ -196,7 +196,7 @@ appendAudit(tx: Tx, event: AllowedAuditEvent): Promise<UUID>;
 | `idempotency_records` | id/actor_id uuid；operation text；key_digest/request_digest bytea；digest_key_id text；target_type text；target_id uuid?；policy_context jsonb；result_summary jsonb；http_status smallint；created_at/expires_at timestamptz | UNIQUE(actor_id,operation,key_digest)；期限 24h；只有已成功提交结果，没有单独提交的 processing 行；不存完整请求或敏感响应 |
 | `rate_limit_buckets` | scope text；key_digest bytea；window_start timestamptz；count integer；expires_at timestamptz；locked_until/last_accepted_at/failure_window_started_at timestamptz? | PK(scope,key_digest,window_start)；count>=0；账号失败状态使用固定标识行，见 §10.3；摘要 key_id 属部署配置版本，轮换时需有明确限流重置操作 |
 | `email_tasks` | id uuid；event_key text；purpose text；recipient varchar(254)?；recipient_masked text；credential_id uuid?；payload_ciphertext/nonce/auth_tag bytea?；key_id text?；template_version integer；locale text；status text；attempts integer；next_attempt_at timestamptz；lease_owner uuid?；lease_version integer=0；lease_expires_at timestamptz?；provider_message_id/error_code text?；created_at/updated_at timestamptz | event_key UNIQUE；queued/sending/sent/failed/cancelled；attempts 0..3；sending 必须有租约；queued 到期领取索引、sending 租约到期索引；终态删除载荷与完整收件人，只留脱敏地址 |
-| `file_objects` | id uuid；storage_key text；owner_id uuid?；purpose text；state text；content_type text；byte_size bigint；width/height integer；created_at/updated_at timestamptz；lease_expires_at timestamptz? | key UNIQUE，不接收客户端 key；purpose avatar/brand_logo/brand_favicon；state staged/attached/orphaned/deleting；avatar 必有 owner；按 state/created_at 回收；品牌的引用由 branding schema 保存并在服务内验证 |
+| `file_objects` | id uuid；storage_key text；owner_id uuid?；purpose text；state text；content_type text；byte_size bigint；width/height integer；created_at/updated_at timestamptz；lease_expires_at timestamptz? | key UNIQUE，不接收客户端 key；purpose avatar/brand_logo/brand_favicon；state staged/attached/orphaned/deleting；avatar 必有 owner；按 state/updated_at/id 回收；品牌的引用由 branding schema 保存并在服务内验证 |
 | `file_variants` | file_id uuid FK file_objects；size smallint；storage_key text UNIQUE；byte_size bigint | PK(file_id,size)；P0 仅 size=32 的 Favicon PNG，key 固定为 file_id-32.png；与父文件共享授权和生命周期，父文件保留 64px 主图 |
 | `example_notes` | id/owner_id uuid；title varchar(120)；body text；version integer；created_at/updated_at timestamptz | owner FK RESTRICT；标题 1–120 码点、正文 0–20000 码点；`(owner_id,created_at DESC,id DESC)`；删除笔记硬删，用户软删不级联 |
 
@@ -802,7 +802,7 @@ worker 每分钟处理租约/凭证/请求到期，每小时回收无引用文�
 2. sharp 解码并去元数据、按用途缩放重编码。头像中心裁剪 256×256 WebP，Logo 等比限制最长边 512，Favicon 生成 32/64 PNG；不给任意文件公开静态服务。
 3. 建 file_objects staged（处理租约最长 10分钟），随机路径写临时文件并原子 rename 到存储 key；失败保留可回收记录，当前头像不变。
 4. SHARE 协调事务按锁顺序检查操作者/目标版本，锁 file_objects 且确认 staged 未过期；关联新文件、附着状态、原引用转 orphaned、版本/审计共同提交。
-5. 回收只处理 staged/orphaned 超过 24小时且无引用的对象；锁行再查引用并标 deleting，提交后删物理文件，再删元数据；崩溃重复处理 deleting，文件不存在视为幂等成功。
+5. 回收只处理 staged/orphaned 从最后状态变更 updated_at 起超过 24小时、租约已过且无引用的对象；每批最多 100 行，用 FOR UPDATE SKIP LOCKED 锁行后以新语句重查全部引用并标 deleting，和开始审计一并提交；事务外删物理文件并同步目录，再同事务删元数据和写成功审计。崩溃重复处理 deleting，文件不存在视为幂等成功。回收不申请用户或 system_state 行锁。
 
 Favicon 的 64px PNG 为主文件，32px PNG 保存在 file_variants，同一父文件的授权、引用和 staged/attached/orphaned/deleting 状态覆盖全部变体。GET `/media/branding/:fileId?size=32|64` 仅对当前 Favicon 支持 size；省略时返回主图，Logo 不接受 size。回收父文件时先处理主文件与全部变体的物理文件，再删除父元数据。
 
@@ -812,7 +812,7 @@ Favicon 的 64px PNG 为主文件，32px PNG 保存在 file_variants，同一父
 
 头像只允许本人，或具有 user:read 且符合当前目标完整资料管理范围者读取；范围外资料摘要同时隐藏 avatar_url，读取接口返回 404。品牌仅当前已附着资源可公开读取，旧引用与未附着候选不可读取。HTTP JSON 与上传分别按 HTTP_TIMEOUT_MS、UPLOAD_TIMEOUT_MS 截止；超限/超时或尚未读完正文的拒绝响应关闭连接，避免客户端复用即将被排空的连接。
 
-写文件前先建元数据，防止 worker 把上传中的无记录文件当孤立文件。极少数元数据失败残留临时文件按相同年龄窗口扫描；不能递归删除媒体根目录或接受客户端相对路径。生产存储根来自部署配置，生成 key 不含 `..` 或路径分隔符。
+写文件前先建元数据，防止 worker 把上传中的无记录文件当孤立文件。崩溃残留的临时文件与无元数据图片按相同 24 小时 mtime 窗口流式扫描，仅接受服务器生成的 UUID.webp/png、UUID-32.png 或 UUID-UUID.tmp 普通文件；存在父元数据或当前引用即跳过，未知名称、目录和符号链接保留。每批最多尝试删除 100 个，先提交审计意图再执行物理删除与完成审计；无元数据扫描在删除后崩溃可留下未完成的意图，不承诺恰好一次事件。不能递归删除媒体根目录或接受客户端相对路径。生产存储根来自部署配置，生成 key 不含 `..` 或路径分隔符。
 
 读取文件先鉴权并确认当前引用，使用已存 content_type + nosniff；头像 no-store，品牌 key 变更产生新 URL。磁盘不足/只读 503 STORAGE_UNAVAILABLE，旧资料版本与文件引用不变。
 
@@ -840,7 +840,7 @@ web 启动：配置校验 → 加载密钥/epoch → 初始化连接池 → 迁�
 
 关闭：停止 ready/接收新请求 → 停止新任务领取 → 等待当前 HTTP 事务或 SMTP 尝试结束（建议最多 30秒）→ 关闭连接池。无法完成的 Sending 留租约恢复，不假写 Sent。收到强制终止仍由数据库事务/租约保障可恢复。
 
-镜像非 root、只读根，显式挂载临时目录、媒体卷及只读密钥文件。web 不加载 migration/maintenance 凭证；worker 只在清理入口使用 maintenance。PUBLIC_ORIGIN 生产 HTTPS 且无任意路径/fragment；SMTP 凭证及数据库连接串不能打印。
+镜像非 root、只读根，显式挂载临时目录、媒体卷及只读密钥文件。web 不加载 migration/maintenance 凭证；文件回收使用 runtime_worker，专用留存清理入口单独使用 maintenance，不把维护权限赋给邮件或文件操作。PUBLIC_ORIGIN 生产 HTTPS 且无任意路径/fragment；SMTP 凭证及数据库连接串不能打印。
 
 ### 14.2 配置目录与命令
 

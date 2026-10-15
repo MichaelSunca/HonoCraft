@@ -1,7 +1,7 @@
 import {spawn,type ChildProcess} from 'node:child_process';
 import {createRequire} from 'node:module';
 import {randomBytes,randomUUID} from 'node:crypto';
-import {mkdtemp,writeFile,rm} from 'node:fs/promises';
+import {mkdtemp,writeFile,rm,mkdir,readFile,utimes} from 'node:fs/promises';
 import {join,resolve} from 'node:path';
 import {tmpdir} from 'node:os';
 import {setTimeout as delay} from 'node:timers/promises';
@@ -67,4 +67,11 @@ it('refuses incompatible catalogs before claiming mail',async()=>{
   const task=await enqueue();await database.pool.query('UPDATE system_state SET catalog_version=99');
   const process=launch();expect(await process.exited).toBe(3);expect(process.output()).toContain('PERMISSION_CATALOG_INCOMPATIBLE');
   expect((await database.pool.query('SELECT attempts FROM email_tasks WHERE id=$1',[task])).rows[0].attempts).toBe(0);
+});
+it('reclaims expired staged media while SMTP deliveries remain in flight',async()=>{
+  const id=randomUUID(),key=id+'.webp',root=join(directory,'media');await mkdir(root);await writeFile(join(root,key),'old image');
+  const temporary=join(root,randomUUID()+'-'+randomUUID()+'.tmp'),old=new Date(Date.now()-25*60*60_000);await writeFile(temporary,'interrupted');await utimes(temporary,old,old);
+  await database.pool.query("INSERT INTO file_objects(id,storage_key,purpose,content_type,byte_size,width,height,updated_at) VALUES($1,$2,'brand_logo','image/webp',9,1,1,clock_timestamp()-interval '25 hours')",[id,key]);
+  await enqueue();await enqueue();const process=launch();await process.ready();await until(()=>smtp.messages.length===2);await until(async()=>(await database.pool.query('SELECT id FROM file_objects WHERE id=$1',[id])).rowCount===0);await expect(readFile(join(root,key))).rejects.toThrow();expect((await database.pool.query("SELECT id FROM email_tasks WHERE status='sending'")).rowCount).toBe(2);
+  await until(async()=>readFile(temporary).then(()=>false,()=>true));child!.kill('SIGTERM');smtp.release();expect(await process.exited).toBe(0);expect(process.output()).toContain('files.cleanup_completed');expect(process.output()).toContain('files.loose_cleanup_completed');
 });
