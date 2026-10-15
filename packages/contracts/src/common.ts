@@ -44,7 +44,7 @@ export const TokenRequestSchema = z.strictObject({ token: TokenSchema });
 export const ResetPasswordSchema = z.strictObject({ token: TokenSchema, new_password: PasswordSchema });
 export const CompleteInvitationSchema = z.strictObject({ token: TokenSchema, password: PasswordSchema, display_name: DisplayNameSchema });
 export const RoleCodeSchema = z.string().regex(/^[a-z][a-z0-9_-]{2,63}$/);
-export const NoteInputSchema = z.strictObject({ title: text(1, 120).refine(value => value.trim().length > 0), body: text(0, 20_000) });
+export const NoteInputSchema = z.strictObject({ title: z.string().trim().pipe(text(1, 120)), body: text(0, 20_000) });
 export const NoteUpdateSchema = NoteInputSchema.extend({ expected_version: VersionSchema });
 export type Pagination = z.infer<typeof PaginationSchema>;
 export type Locale = z.infer<typeof LocaleSchema>;

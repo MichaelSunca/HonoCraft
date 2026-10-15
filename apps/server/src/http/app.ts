@@ -30,6 +30,8 @@ import {createEmailChange} from '../modules/users/email-change.js';
 import {createSettingsManagement} from '../modules/settings/management.js';
 import {createLogQueries} from '../modules/audit/queries.js';
 import {createMediaService} from '../modules/files/service.js';
+import {createNotesService} from '../modules/example-notes/service.js';
+import {createNotesRoutes,exampleNotesModule} from '../modules/example-notes/routes.js';
 import { createClientIpResolver } from './security.js';
 import {createSessionManagement} from '../modules/auth/session-management.js';
 import {createAccountSecurity} from '../modules/auth/account-security.js';
@@ -89,7 +91,7 @@ export function createHttpApp({pool,config,passwords,secrets,webRoot}:AppDepende
     }
     await next();
   });
-  app.use('/api/*',(c,next)=>bodyLimit({maxSize:isUpload(c)?3*1024*1024:64*1024,onError:()=>{c.header('Connection','close');throw new AppError('PAYLOAD_TOO_LARGE');}})(c,next));
+  app.use('/api/*',(c,next)=>bodyLimit({maxSize:isUpload(c)?3*1024*1024:config.exampleNotesEnabled&&/^\/api\/v1\/example-notes(?:\/[^/]+)?$/.test(c.req.path)?128*1024:64*1024,onError:()=>{c.header('Connection','close');throw new AppError('PAYLOAD_TOO_LARGE');}})(c,next));
   app.use('/api/*',async(c,next)=>{
     if(!['/api/v1/public/settings','/api/v1/auth/bootstrap/complete'].includes(c.req.path)&&!c.req.path.startsWith('/api/v1/media/branding/')){
       const state=(await pool.query<{initialization_status:string}>('SELECT initialization_status FROM system_state WHERE id=1')).rows[0];
@@ -142,6 +144,7 @@ export function createHttpApp({pool,config,passwords,secrets,webRoot}:AppDepende
   app.get('/api/v1/invites',async c=>c.json({data:await invitationQueries.list(actorRef(c),c.req.query()),request_id:c.get('requestId')}));
   app.get('/api/v1/permissions',async c=>c.json({data:await permissionQueries.list(actorRef(c),c.req.query()),request_id:c.get('requestId')}));
   app.get('/api/v1/settings',async c=>c.json({data:await settingsManagement.read(actorRef(c),c.req.query()),request_id:c.get('requestId')}));
+  if(config.exampleNotesEnabled)app.route(exampleNotesModule.apiBase,createNotesRoutes(createNotesService(pool,secrets),config));
   for(const asset of ['avatar','logo','favicon'] as const){
     const path=asset==='avatar'?'/api/v1/me/avatar':'/api/v1/settings/branding/'+asset;
     app.put(path,async c=>{

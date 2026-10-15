@@ -227,7 +227,7 @@ appendAudit(tx: Tx, event: AllowedAuditEvent): Promise<UUID>;
 
 request_id → 请求大小/时限 → 安全头 → 可信 IP → IP 限流 → Origin/Content-Type → schema → 读身份或写用例 → 授权/业务 → DTO → 响应。
 
-默认 JSON 上限 64 KiB；头像 multipart 文件上限 2 MiB、总请求上限 3 MiB；只接收一个文件及声明的版本字段。超限 413，类型不支持 415。HTTP 处理截止建议 15 秒（上传 30 秒），参数属于部署配置；SMTP 不在 HTTP 请求内执行。
+默认 JSON 上限 64 KiB；启用的个人笔记接口上限 128 KiB，容纳 20000 Unicode 码点正文与标题（含四字节字符），字段字符数仍独立校验；头像 multipart 文件上限 2 MiB、总请求上限 3 MiB，只接收一个文件及声明的版本字段。超限 413，类型不支持 415。HTTP 处理截止建议 15 秒（上传 30 秒），参数属于部署配置；SMTP 不在 HTTP 请求内执行。
 
 生产写请求 Origin 必须精确等于 PUBLIC_ORIGIN；无 Origin 也拒绝。匿名 JSON 操作要求 application/json。认证写还要求会话绑定的 `X-CSRF-Token`，multipart 也一样；logout 例外规则见 §6.5。`X-Forwarded-For` 只从已配置可信代理覆盖的链路提取。
 

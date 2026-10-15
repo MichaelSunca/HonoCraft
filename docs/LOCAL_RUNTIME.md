@@ -273,3 +273,21 @@ API 请求使用配置中的 JSON/上传两种期限（缺省 15/30 秒），超
 Worker 每批最多锁定 100 个候选，跳过其他进程锁定的行；staged/orphaned 从最后状态变更 updated_at 满 24 小时且租约已过才可回收。锁文件后用新查询重查 users.avatar_file_id 和 branding 两项引用，不申请用户或全局安全行锁。标 deleting 与开始审计提交后，事务外逐个 unlink 主文件及变体并同步目录；元数据删除与成功审计同事务。缺失文件视为成功，IO/审计失败保留 deleting 供后续恢复；不会递归删除目录。
 
 随后流式扫描媒体目录，仅处理严格匹配服务器 UUID 文件名、mtime 满 24 小时的普通临时文件/图片/32px 变体；任何已知父元数据或当前引用都使扫描跳过。未知名称、目录和符号链接保留。每批最多尝试删除 100 个散落文件，删除前提交审计意图；若删除后进程退出或完成审计失败，意图仍可供诊断，不能把缺少完成事件当作未执行。Worker 日志只记录固定事件名和计数，不输出文件路径、图片或凭证。审计留存清理使用后续独立 maintenance 入口，文件回收仅需 runtime_worker 权限。
+
+## 个人笔记参考模块 API
+
+此开发增量包含契约、模块声明、路由、owner repository 和服务；正式权限目录启停命令、页面及裁剪流程仍待交付。保留当前 `EXAMPLE_NOTES_ENABLED=false`；不能只修改环境变量开启，数据库模块标记和权限目录必须先由后续正式运维流程同步，否则进程启动拒绝兼容性检查。
+
+| 路径（相对 `/api/v1`） | 权限与输入 | 结果 |
+| --- | --- | --- |
+| GET `/example-notes` | example-note:read；page/page_size/query/sort/direction | 本人笔记 items、total 与分页 |
+| POST `/example-notes` | example-note:create + read；title/body | 201，当前 note DTO |
+| GET `/example-notes/:id` | example-note:read + owner | 当前 note DTO |
+| PATCH `/example-notes/:id` | example-note:update + read + owner；完整 title/body、expected_version | 200，递增版本后的 DTO |
+| DELETE `/example-notes/:id` | example-note:delete + read + owner；expected_version | 200，id/deleted/最后版本 |
+
+owner 永远来自当前账号，超级管理员同样不能读取、修改或删除其他 owner 的笔记；越界和不存在均返回 404。创建不接受 owner_id，其他写入也不接受客户端 id/version/额外字段。标题先 trim，再校验 1–120 Unicode 码点；正文保留空白，最多 20000 码点，拒绝 NUL。笔记 JSON 总量限 128 KiB，其他 JSON 接口仍为 64 KiB。内容以普通字符串返回，后续页面必须作为纯文本渲染。
+
+query 为空或 2–100 码点，仅匹配标题，百分号/下划线按普通字符处理；sort 仅 created_at/updated_at/title，direction 为 asc/desc，id 同向打破平局。列表与总数同一只读快照，不接受 owner 筛选。DTO 不返回 owner_id，allowed_actions 表示当前可用更新/删除操作。
+
+所有写入要求 Origin、CSRF 和 UUID Idempotency-Key；创建/编辑/删除及审计、最小结果摘要同事务。重放先验证当前会话、模块和权限，只返回 note ID、outcome、version、completed_at；删除后的合法重放仍可返回原完成摘要。审计仅记录笔记 ID、动作及版本，不复制标题/正文。重新创建操作不能借用不同正文的旧键，版本冲突不覆盖原内容。
