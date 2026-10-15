@@ -11,6 +11,7 @@ import {permissionDefinitions} from '@honocraft/contracts/permissions';
 import {api,ApiError,errorMessage,mutationOutcomeUnknown} from './api.js';
 import type {MessageKey} from './i18n.js';
 import {useRoleLabel} from './user-role-picker.js';
+import {BrandAssets} from './media.js';
 type Group='branding'|'security';
 type Fields=z.infer<typeof BrandingEditableSchema>&z.infer<typeof SecurityValueSchema>&{reason:string;typed_label:string};
 const labels:Record<typeof BRANDING_SETTING_KEYS[number]|typeof SECURITY_SETTING_KEYS[number],MessageKey>={
@@ -33,7 +34,7 @@ export function SettingsPage({me,queryKey}:{me:Me;queryKey:(string|number)[]}){
   const settings=useQuery({queryKey:settingKey(me),enabled:allowed,queryFn:({signal})=>api('/settings',SettingsSchema,{protected:true,signal})});
   if(!allowed)return <h1>{t('forbidden')}</h1>;
   return <><h1>{t('settings')}</h1><p className="muted">{t('settingsIntro')}</p>{saved&&<p className="notice" role="status">{t('settingsSaved')}</p>}
-    {settings.isPending?<p role="status">{t('loading')}</p>:!settings.data?<div role="alert">{t(errorMessage(settings.error))}<button onClick={()=>void settings.refetch()}>{t('retry')}</button></div>:<div className="settings-grid">{(['branding','security'] as const).map(group=><section className="panel" key={group} aria-labelledby={group+'-title'}><h2 id={group+'-title'}>{t(group==='branding'?'branding':'securityPolicy')}</h2><p className="hint">{t(group==='branding'?'brandingHelp':'securitySettingsHelp')}</p><SettingsFacts me={me} group={group} settings={settings.data}/>{settings.data[group].allowed_actions.includes('update')&&<button onClick={()=>{setSaved(false);setSelection({group,snapshot:settings.data});}}>{t(group==='branding'?'editBranding':'editSecuritySettings')}</button>}</section>)}</div>}
+    {settings.isPending?<p role="status">{t('loading')}</p>:!settings.data?<div role="alert">{t(errorMessage(settings.error))}<button onClick={()=>void settings.refetch()}>{t('retry')}</button></div>:<div className="settings-grid">{(['branding','security'] as const).map(group=><section className="panel" key={group} aria-labelledby={group+'-title'}><h2 id={group+'-title'}>{t(group==='branding'?'branding':'securityPolicy')}</h2><p className="hint">{t(group==='branding'?'brandingHelp':'securitySettingsHelp')}</p><SettingsFacts me={me} group={group} settings={settings.data}/>{settings.data[group].allowed_actions.includes('update')&&<button onClick={()=>{setSaved(false);setSelection({group,snapshot:settings.data});}}>{t(group==='branding'?'editBranding':'editSecuritySettings')}</button>}{group==='branding'&&<BrandAssets me={me} branding={settings.data.branding} queryKey={queryKey}/>}</section>)}</div>}
     {selection&&<SettingsDialog me={me} queryKey={queryKey} group={selection.group} snapshot={selection.snapshot} close={()=>setSelection(null)} saved={()=>{setSelection(null);setSaved(true);}}/>}
   </>;
 }

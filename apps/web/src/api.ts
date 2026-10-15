@@ -12,12 +12,12 @@ let generation=0;
 export function discardSession(){generation++;}
 export const sessionEvents=new EventTarget();
 export async function api<T>(path:string,schema:z.ZodType<T>,options:{body?:unknown;method?:string;csrf?:string;idempotencyKey?:string;protected?:boolean;signal?:AbortSignal}={}):Promise<T>{
-  const started=generation;
+  const started=generation,multipart=options.body instanceof FormData;
   let response:Response;
   try{
     response=await fetch('/api/v1'+path,{method:options.method??(options.body===undefined?'GET':'POST'),credentials:'same-origin',cache:'no-store',
-      headers:{...(options.body===undefined?{}:{'Content-Type':'application/json'}),...(options.csrf?{'X-CSRF-Token':options.csrf}:{}),...(options.idempotencyKey?{'Idempotency-Key':options.idempotencyKey}:{})},
-      ...(options.body===undefined?{}:{body:JSON.stringify(options.body)}),...(options.signal?{signal:options.signal}:{})});
+      headers:{...(options.body===undefined||multipart?{}:{'Content-Type':'application/json'}),...(options.csrf?{'X-CSRF-Token':options.csrf}:{}),...(options.idempotencyKey?{'Idempotency-Key':options.idempotencyKey}:{})},
+      ...(options.body===undefined?{}:{body:multipart?options.body as FormData:JSON.stringify(options.body)}),...(options.signal?{signal:options.signal}:{})});
   }catch(error){if(error instanceof DOMException&&error.name==='AbortError')throw error;throw new ApiError('NETWORK');}
   if(options.protected&&started!==generation)throw new DOMException('Session changed','AbortError');
   let payload:unknown;try{payload=await response.json();}catch{if(response.status===401&&options.protected)sessionEvents.dispatchEvent(new Event('invalid'));throw new ApiError('INTERNAL_ERROR',response.status);}

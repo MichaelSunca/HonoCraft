@@ -2,7 +2,7 @@ import {test as base} from '@playwright/test';
 import type {Pool} from 'pg';
 import {resolve} from 'node:path';
 import {once} from 'node:events';
-import {writeFile} from 'node:fs/promises';
+import {writeFile,mkdtemp,rm} from 'node:fs/promises';
 import {startTestPostgres,availablePort} from '../helpers/postgres.js';
 import {migrate} from '../../apps/server/src/infrastructure/migrations.js';
 import {loadConfig} from '../../apps/server/src/infrastructure/config.js';
@@ -21,12 +21,13 @@ type Backend={pool:Pool;origin:string;initialize:()=>Promise<string>;account:()=
 export const test=base.extend<{backend:Backend}>({backend:async({page},use,testInfo)=>{
   const responses:Array<{path:string;status:number;code?:string;sessionTimes?:unknown}>=[],diagnostics:Promise<void>[]=[];
   page.on('response',response=>{const path=new URL(response.url()).pathname;if(!path.startsWith('/api/'))return;const record:{path:string;status:number;code?:string;sessionTimes?:unknown}={path,status:response.status()};responses.push(record);if(response.status()>=400)diagnostics.push(response.json().then(async body=>{record.code=body.error?.code;if(record.code==='SESSION_INVALID')record.sessionTimes=(await database.pool.query('SELECT created_at,last_seen_at,clock_timestamp() observed_at,extract(epoch FROM last_seen_at-clock_timestamp())*1000 AS future_ms FROM sessions')).rows;}).catch(()=>undefined));});
-  const database=await startTestPostgres();let server:ReturnType<typeof startHttpServer>|undefined;
+  const database=await startTestPostgres();let server:ReturnType<typeof startHttpServer>|undefined,mediaRoot:string|undefined;
   try{
     await migrate(database.pool);await database.pool.query("UPDATE system_settings SET typed_value=jsonb_set(typed_value,'{default_locale}','\"en\"') WHERE key='branding'");
+    mediaRoot=await mkdtemp(resolve('.local/tests/browser-media-'));
     const port=await availablePort(),origin=`http://127.0.0.1:${port}`;
     const config=loadConfig({NODE_ENV:'test',PUBLIC_ORIGIN:origin,PORT:String(port),DATABASE_URL:database.connectionString,
-      MAIL_MODE:'capture',SMTP_HOST:'127.0.0.1',SMTP_PORT:'1025',MAIL_FROM:'test@example.test',FILE_STORAGE_ROOT:'.local/media',EXAMPLE_NOTES_ENABLED:'false',
+      MAIL_MODE:'capture',SMTP_HOST:'127.0.0.1',SMTP_PORT:'1025',MAIL_FROM:'test@example.test',FILE_STORAGE_ROOT:mediaRoot,EXAMPLE_NOTES_ENABLED:'false',
       MAIL_PAYLOAD_KEYRING_FILE:'.local/test-mail',DIGEST_KEY_FILE:'.local/test-digest',CSRF_KEY_FILE:'.local/test-csrf',CREDENTIAL_EPOCH_FILE:'.local/test-epoch'});
     const passwords=await createPasswordService({concurrency:2,blockedPasswords:(await loadPasswordBlocklist()).passwords});
     server=startHttpServer({pool:database.pool,config,passwords,secrets,webRoot:resolve('apps/web/dist')});if(!server.listening)await once(server,'listening');
@@ -50,6 +51,6 @@ export const test=base.extend<{backend:Backend}>({backend:async({page},use,testI
       await writeFile(diagnosticPath,JSON.stringify({responses,sessions:sessions.rows}));
       await testInfo.attach('safe-runtime-diagnostic',{path:diagnosticPath,contentType:'application/json'});
     }
-    if(server){server.closeAllConnections();await new Promise<void>(resolve=>server!.close(()=>resolve()));}await database.close();}
+    if(server){server.closeAllConnections();await new Promise<void>(resolve=>server!.close(()=>resolve()));}if(mediaRoot)await rm(mediaRoot,{recursive:true,force:true});await database.close();}
 }});
 export {expect} from '@playwright/test';
