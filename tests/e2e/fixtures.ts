@@ -14,20 +14,22 @@ import {createPublicAuthService} from '../../apps/server/src/modules/auth/public
 import {initializeBootstrap} from '../../apps/server/src/modules/auth/bootstrap.js';
 import {startHttpServer} from '../../apps/server/src/http/app.js';
 import {randomUUID} from 'node:crypto';
+import {setExampleNotesEnabled} from '../../apps/server/src/modules/example-notes/catalog.js';
 const secrets={epoch:'browser-test-epoch',csrfKey:Buffer.alloc(32,3),digestKey:{id:'browser-v1',key:Buffer.alloc(32,7)},mailKeyring:{activeKeyId:'v1',keys:new Map([['v1',Buffer.alloc(32,4)]])}};
 const meta=()=>({requestId:randomUUID(),ip:'127.0.0.1',userAgent:'browser fixture'});
 export const password='A browser testing secret passphrase';
 type Backend={pool:Pool;origin:string;initialize:()=>Promise<string>;account:()=>Promise<void>;token:(purpose:string)=>Promise<string>};
-export const test=base.extend<{backend:Backend}>({backend:async({page},use,testInfo)=>{
+export const test=base.extend<{backend:Backend;notesEnabled:boolean}>({notesEnabled:[false,{option:true}],backend:async({page,notesEnabled},use,testInfo)=>{
   const responses:Array<{path:string;status:number;code?:string;sessionTimes?:unknown}>=[],diagnostics:Promise<void>[]=[];
   page.on('response',response=>{const path=new URL(response.url()).pathname;if(!path.startsWith('/api/'))return;const record:{path:string;status:number;code?:string;sessionTimes?:unknown}={path,status:response.status()};responses.push(record);if(response.status()>=400)diagnostics.push(response.json().then(async body=>{record.code=body.error?.code;if(record.code==='SESSION_INVALID')record.sessionTimes=(await database.pool.query('SELECT created_at,last_seen_at,clock_timestamp() observed_at,extract(epoch FROM last_seen_at-clock_timestamp())*1000 AS future_ms FROM sessions')).rows;}).catch(()=>undefined));});
   const database=await startTestPostgres();let server:ReturnType<typeof startHttpServer>|undefined,mediaRoot:string|undefined;
   try{
     await migrate(database.pool);await database.pool.query("UPDATE system_settings SET typed_value=jsonb_set(typed_value,'{default_locale}','\"en\"') WHERE key='branding'");
+    if(notesEnabled)await setExampleNotesEnabled(database.pool,{enabled:true,reason:'Browser example module fixture'},meta());
     mediaRoot=await mkdtemp(resolve('.local/tests/browser-media-'));
     const port=await availablePort(),origin=`http://127.0.0.1:${port}`;
     const config=loadConfig({NODE_ENV:'test',PUBLIC_ORIGIN:origin,PORT:String(port),DATABASE_URL:database.connectionString,
-      MAIL_MODE:'capture',SMTP_HOST:'127.0.0.1',SMTP_PORT:'1025',MAIL_FROM:'test@example.test',FILE_STORAGE_ROOT:mediaRoot,EXAMPLE_NOTES_ENABLED:'false',
+      MAIL_MODE:'capture',SMTP_HOST:'127.0.0.1',SMTP_PORT:'1025',MAIL_FROM:'test@example.test',FILE_STORAGE_ROOT:mediaRoot,EXAMPLE_NOTES_ENABLED:String(notesEnabled),
       MAIL_PAYLOAD_KEYRING_FILE:'.local/test-mail',DIGEST_KEY_FILE:'.local/test-digest',CSRF_KEY_FILE:'.local/test-csrf',CREDENTIAL_EPOCH_FILE:'.local/test-epoch'});
     const passwords=await createPasswordService({concurrency:2,blockedPasswords:(await loadPasswordBlocklist()).passwords});
     server=startHttpServer({pool:database.pool,config,passwords,secrets,webRoot:resolve('apps/web/dist')});if(!server.listening)await once(server,'listening');

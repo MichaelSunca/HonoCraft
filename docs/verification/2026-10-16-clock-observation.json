@@ -1,0 +1,35 @@
+{
+  "samples": 66864,
+  "nodeBackwards": 2,
+  "pgBackwards": 2,
+  "events": [
+    {
+      "source": "node",
+      "previous": 1792088525883,
+      "current": 1792088525291,
+      "delta": -592,
+      "monotonic_delta": 1.4784279999985301
+    },
+    {
+      "source": "postgres",
+      "previous": 1792088525883,
+      "current": 1792088525291,
+      "delta": -592,
+      "monotonic_delta": 1.4784279999985301
+    },
+    {
+      "source": "node",
+      "previous": 1792088557780,
+      "current": 1792088557199,
+      "delta": -581,
+      "monotonic_delta": 1.4063030000033905
+    },
+    {
+      "source": "postgres",
+      "previous": 1792088557780,
+      "current": 1792088557199,
+      "delta": -581,
+      "monotonic_delta": 1.4063030000033905
+    }
+  ]
+}

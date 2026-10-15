@@ -100,8 +100,8 @@
 **Files:** `modules/{files,example-notes}/*`; file/notes tests.
 **Interfaces:** Produces 受控文件存储与读取、owner-scoped CRUD、模块开关/目录同步。
 
-- [ ] RED：伪图片/超限/SVG、授权失败保留原头像、两用户及超管不能跨 owner。
-- [ ] 实现 sharp 重编码、staged/attached/orphaned/deleting、版本与审计；实现笔记 CRUD。
+- [x] RED：伪图片/超限/SVG、授权失败保留原头像、两用户及超管不能跨 owner。
+- [x] 实现 sharp 重编码、staged/attached/orphaned/deleting、版本与审计；实现笔记 CRUD。
 - [ ] 验证文件回收竞态、模块禁用 API/菜单无残留及显式裁剪迁移。
 
 ## Task 9: React 管理端和认证页面

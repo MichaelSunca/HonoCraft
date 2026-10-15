@@ -36,8 +36,8 @@ Task 4: 加密 outbox、模板、投递前复核、租约/CAS/重试及 SMTP 已
 Task 5: 会话、Argon2 密码、登录、HTTP Cookie/Origin/CSRF、本人资料与退出已实现；初始化服务、完成接口、Web 进程和密钥加载已实现；初始化 CLI 已实现；初始化页面、近期验证、本人改密及会话管理 API 已接入；管理员恢复消费等后续账号流程仍待交付。
 Task 6: in progress — 注册、验证/重发、找回/重置密码及本人/管理员邮箱变更服务和 HTTP 已实现；账号状态管理 API 及本人邮箱操作界面已实现；完整生命周期验收待补。
 Task 7: in progress — 邀请、角色、资格及权限目录 API 已实现；用户查询、资料修正、状态/软删除、角色替换、管理员重置邮件和邮箱变更 API 已实现；品牌普通字段和安全策略整组设置 API、审计/安全事件/邮件任务只读 API 已实现；媒体等管理接口仍未完成。
-Task 8: in progress — 媒体上传/移除、受控图像转换、当前引用授权读取、Favicon 变体、Worker 文件回收、owner-scoped 笔记 API 与正式目录启停命令已实现；示例页面与裁剪流程仍未完成。
-Task 9: in progress — 认证、个人工作台、资料、账号安全（含本人邮箱操作）、会话、邀请、角色、权限目录、用户管理、品牌/安全设置、审计/安全事件/邮件任务页面、用户审计跳转、品牌图片与头像已接入真实 API；示例页面等仍未完成。
+Task 8: in progress — 媒体上传/移除、受控图像转换、当前引用授权读取、Favicon 变体、Worker 文件回收、owner-scoped 笔记 API/页面与正式目录启停命令已实现；彻底裁剪与试用仍未完成。
+Task 9: in progress — 认证、个人工作台、资料、账号安全（含本人邮箱操作）、会话、邀请、角色、权限目录、用户管理、品牌/安全设置、审计/安全事件/邮件任务页面、用户审计跳转、品牌图片、头像与本人笔记已接入真实 API；完整交互验收与发布仍未完成。
 Task 10–12: pending（已有前端构建与局部浏览器验收，完整发布和 37 项 P0 验收未完成）。
 
 ## 2026-10-10 continuation evidence
@@ -349,3 +349,14 @@ Task 10–12: pending（已有前端构建与局部浏览器验收，完整发�
 - 全部效果、聚合管理审计与安全事件同事务；审计失败回滚权限目录、用户/角色版本、会话、邀请与邮件取消。CLI 仅输出计数/状态/下一步和固定错误，无连接串、秘密或笔记正文；退出码 0/2/3/4 与运行说明一致。维护窗口停止 Web/Worker，再显式转换、同步 env、检查和重启；不声称停用等于数据裁剪。
 - 服务 RED 9/9 失败；补齐后 9/9 通过。邀请夹具首次 MAIL_CREDENTIAL_MISMATCH 源于自行计算的到期时刻与真实凭证不一致，改为使用数据库 RETURNING 的精确到期时间，未放宽 outbox 校验。命令最初仅缺入口，补可运行空行为后再次观察 11/11 行为失败；正式实现后命令 11/11、模块 9/9、原启动检查 10/10 目标通过。
 - 最终 `pnpm check`、完整单元 85/85（11 文件）、完整 PostgreSQL/HTTP 集成 383/383（38 文件，170.02 秒）通过；源码在整套验证期间保持稳定。笔记页面与裁剪/试用继续待完成，全部 P0 目标保持进行中。
+
+## 2026-10-16 personal notes interface
+
+- 新增懒加载本人笔记列表/详情、URL 标题筛选/排序/分页与返回链接、显式刷新、创建/编辑/删除确认；中英文与现有主题。页面和 API 同样仅在部署开启时由服务端注册，菜单按 me 当前 read 权限，详情动作按 allowed_actions；页面不出现 owner 选择。
+- 标题与正文用 React 文本渲染，脚本字符串无执行；共享 Unicode 规则用于字段错误/首错聚焦，未用 UTF-16 maxLength 缩小字符容量。版本冲突保留输入，展示当前标题/正文/版本，明确采用后才能再次提交。删除必须查看当前内容并确认。
+- 不确定创建/编辑/删除保持同一正文/版本/幂等键，冻结输入和关闭；重连背景详情已看到已提交版本仍不替换该操作。删除成功重放只需最小摘要，随后读列表；已确认写入但 GET 失败只允许重读，不再次写入。所有缓存受账号/generation 隔离，不在浏览器持久存储保存笔记正文。
+- 浏览器后端新增默认关闭的 notesEnabled option，启用时调用已交付的正式目录转换服务，再通过真实注册/验证/登录进入页面，不伪造权限目录。原有默认关闭夹具行为保持一致。首个 RED 先因测试用了带参数的多语句 SQL 失败，拆分夹具后再次观察真实缺失导航失败；接入后首轮 7/8 通过，唯一预期标题 Access denied 与既有统一文案不一致，改为断言原文案，未修改产品文案来满足测试。
+- 扩展 12 项后有一轮 11/12，冲突提交先返回 SESSION_INVALID，响应后的时间采样不足以确定拒绝原因；同代码下该用例首次及独立重跑均通过。随后的独立 90 秒 Node + 全新 PostgreSQL 采样 66864 次，两者同时两次回退 592ms/581ms，而单调间隔仅正向约 1.4ms；原始数值、复现脚本与适用范围保存在 `docs/verification/2026-10-16-clock-observation.{md,json}`。没有放宽认证规则，也不把所有 SESSION_INVALID 都无条件归因于此。
+- 已实际查看 `.tools/notes-mobile.png`：中文深色 360px，120 码点标题、长正文、字段说明、焦点边框和底部确认按钮可用，无横向溢出；不等同完整 WCAG 验收。新增 MODULES 指南说明实际代码边界、目录启停、owner/事务/审计/前端恢复及直接测试入口，裁剪和独立开发者计时明确未验收。
+- 当前源码稳定后的 `pnpm check`、前端构建和完整单元 85/85 通过；构建保留上游 Zod 注释与主包 556.52kB 提示，笔记懒加载块 10.94kB。完整服务端回归本轮 382/383：account-security 的“does not let an idempotent password-change replay bypass a newly active account lock”在错误密码循环收到 SESSION_INVALID 而非 AUTH_FAILED；最终独立核对及完整浏览器结果另记。上一阶段 383/383 的时点保持明确，不作为本轮整套绿色。
+- 最终完整浏览器 106/108（约 6.3 分钟），其中全部笔记 12/12 通过。失败为 logs 的“guards each log page independently and exposes only the current permitted navigation”和 role-management 的“maps copy validation to visible inputs”，两处均先 SESSION_INVALID，分别捕获 future last_seen_at 236.490ms / 252.940ms，未到达预期表单/权限结果；原诊断保存在 .tools/browser-diagnostics。独立复查这两项 2/2 通过。同代码独立核对 account-security、http-notes、example-module、ops-module、web-process、startup 共 58/58 通过（38.08 秒），含原失败的账号锁用例；该结果不替代 382/383 的完整回归记录。文档本地链接及 git diff --check 通过。全量绿色、稳定目标环境、裁剪/试用及后续维护/恢复/发布验收仍待完成。
