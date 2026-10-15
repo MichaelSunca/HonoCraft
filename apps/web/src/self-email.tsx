@@ -6,7 +6,7 @@ import {z} from 'zod';
 import {normalizeEmail,ReauthenticateSchema} from '@honocraft/contracts/common';
 import {SelfEmailChangeSchema,SelfEmailCancelSchema,EmailChangeStartedSchema,EmailChangeCancelledSchema} from '@honocraft/contracts/email-change';
 import {MeSchema,ReauthenticatedSchema,type Me} from '@honocraft/contracts/http';
-import {api,ApiError,errorMessage} from './api.js';
+import {api,ApiError,errorMessage,mutationOutcomeUnknown} from './api.js';
 type Selection={kind:'start';version:number;email:string}|{kind:'cancel';version:number;request:NonNullable<Me['pending_email_change']>};
 type Operation={key:string;method:string;body:unknown};
 const resultSchema=z.union([EmailChangeStartedSchema,EmailChangeCancelledSchema,z.object({outcome:z.enum(['email_change_requested','email_change_cancelled']),resource_id:z.uuid(),version:z.number().int().positive(),completed_at:z.string()})]);
@@ -34,13 +34,13 @@ export function SelfEmailPanel({me,queryKey}:{me:Me;queryKey:(string|number)[]})
     else setSelection(selection.kind==='start'?{...selection,version:latest.user.version}:{...selection,version:latest.user.version,request:latest.pending_email_change!});
     client.setQueryData(queryKey,latest);setLatest(null);setConflict(false);setError(null);operation.current=null;
   }
-  async function submit(){if(!selection||(!unknown&&(conflict||gone||reauth)))return;setBusy(true);setError(null);
+  async function submit(){if(!selection||busy||reauth||(!unknown&&(conflict||gone)))return;setBusy(true);setError(null);
     try{
       operation.current??={key:crypto.randomUUID(),method:selection.kind==='start'?'POST':'DELETE',body:selection.kind==='start'?
         SelfEmailChangeSchema.parse({expected_version:selection.version,new_email:selection.email}):SelfEmailCancelSchema.parse({expected_version:selection.version,request_id:selection.request.id,request_version:selection.request.version})};
       const request=operation.current;await api('/me/email-change',resultSchema,{method:request.method,body:request.body,csrf:me.csrf_token,protected:true,idempotencyKey:request.key});
       operation.current=null;setUnknown(false);setSelection(null);setSaved(true);if(selection.kind==='start')form.reset();await refresh();
-    }catch(cause){setError(cause);const uncertain=cause instanceof ApiError&&(cause.code==='NETWORK'||cause.code==='INTERNAL_ERROR'||cause.status>=500);setUnknown(uncertain);if(!uncertain)operation.current=null;
+    }catch(cause){setError(cause);const uncertain=mutationOutcomeUnknown(cause,unknown);setUnknown(uncertain);if(!uncertain)operation.current=null;
       if(cause instanceof ApiError&&cause.code==='REAUTH_REQUIRED'){setReauth(true);setVerified(false);}
       if(cause instanceof ApiError&&['VERSION_CONFLICT','CHANGE_REQUEST_INVALID','NOT_FOUND'].includes(cause.code)){setConflict(true);await loadLatest();}
     }finally{setBusy(false);}
@@ -58,7 +58,7 @@ export function SelfEmailPanel({me,queryKey}:{me:Me;queryKey:(string|number)[]})
       {!!error&&<div role="alert" className="notice error">{t(unknown?'emailRetryHelp':error instanceof ApiError&&['VERSION_CONFLICT','CHANGE_REQUEST_INVALID','NOT_FOUND'].includes(error.code)?'emailRequestConflict':error instanceof ApiError&&error.code==='AUTH_FAILED'?'currentPasswordIncorrect':error instanceof ApiError&&error.code==='EMAIL_CONFLICT'?'emailAddressOccupied':errorMessage(error),{seconds:error instanceof ApiError?error.retryAfter:60})}</div>}
       {conflict&&<section className="notice"><h3>{t('currentAccount')}</h3>{latest?<><p className="wrap">{latest.user.display_name} · {latest.user.email} · {t('roleVersion',{version:latest.user.version})}</p><p className="wrap">{t('pendingEmail')}: {latest.pending_email_change?.new_email??t('noPendingEmail')}</p><button onClick={useLatest}>{t('useLatest')}</button></>:<button disabled={busy} onClick={()=>void loadLatest()}>{t('reloadVersion')}</button>}</section>}
       {gone&&<p className="notice">{t('emailRequestGone')}</p>}{verified&&<p className="notice" role="status">{t('emailVerifiedAgain')}</p>}
-      <div className="dialog-actions"><button disabled={frozen} onClick={close}>{t('close')}</button><button className="primary" disabled={busy||(!unknown&&(conflict||gone||reauth))} onClick={()=>void submit()}>{t(busy?'submitBusy':unknown?'retrySame':selection.kind==='start'?'sendEmailLink':'cancelEmailRequest')}</button></div>
+      <div className="dialog-actions"><button disabled={frozen} onClick={close}>{t('close')}</button><button className="primary" disabled={busy||reauth||(!unknown&&(conflict||gone))} onClick={()=>void submit()}>{t(busy?'submitBusy':unknown?'retrySame':selection.kind==='start'?'sendEmailLink':'cancelEmailRequest')}</button></div>
       {reauth&&<form className="reauth-form" aria-label={t('verifyIdentityTitle')} noValidate onSubmit={verification.handleSubmit(verify)}><div className="field"><label htmlFor="email-password">{t('currentPassword')}</label><input id="email-password" type="password" autoComplete="current-password" disabled={busy} {...verification.register('current_password',{required:t('required')})} aria-invalid={!!verification.formState.errors.current_password} aria-describedby={verification.formState.errors.current_password?'email-password-error':undefined}/>{verification.formState.errors.current_password&&<span id="email-password-error" className="field-error">{verification.formState.errors.current_password.message}</span>}</div><button className="primary" disabled={busy}>{t('verifyIdentity')}</button></form>}
     </dialog>}
   </section>;

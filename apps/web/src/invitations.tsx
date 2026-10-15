@@ -7,7 +7,7 @@ import {InvitationDtoSchema,InvitationListSchema,InvitationQuerySchema,Invitatio
 import {RoleDtoSchema,RoleListSchema} from '@honocraft/contracts/roles';
 import {ReauthenticatedSchema,type Me} from '@honocraft/contracts/http';
 import {normalizeEmail} from '@honocraft/contracts/common';
-import {api,ApiError,errorMessage} from './api.js';
+import {api,ApiError,errorMessage,mutationOutcomeUnknown} from './api.js';
 type Invitation=z.infer<typeof InvitationDtoSchema>;
 type Selection={kind:'create'|'view'|'resend'|'revoke'|'reinvite';invitation?:Invitation};
 const replay=z.object({outcome:z.enum(['invite_created','invite_resent','invite_revoked']),resource_id:z.uuid(),version:z.number().int(),completed_at:z.string()});
@@ -49,9 +49,9 @@ function InvitationDialog({me,selection,close,saved}:{me:Me;selection:Selection;
   const high=create?selected.data?.some(role=>role.requires_reauth_actions.includes('invite')):target?.requires_reauth_actions.includes(selection.kind as 'resend'|'revoke');
   const canSubmit=create?!!selected.data&&ids.length>0&&selected.data.every(role=>role.allowed_actions.includes('invite')):target?.allowed_actions.includes(selection.kind as 'resend'|'revoke');
   const frozen=busy||unknown;
-  function draft(){operation.current=null;setError(null);}
+  function draft(){if(unknown)return;operation.current=null;setError(null);}
   async function loadLatest(){if(!target)return;setBusy(true);try{setLatest(await api('/invites/'+target.id,InvitationDtoSchema,{protected:true}));void client.invalidateQueries({queryKey:['actor',me.user.id,'invites']});}catch(cause){setError(cause);}finally{setBusy(false);}}
-  async function submit(){setError(null);setBusy(true);
+  async function submit(){if(busy||reauth||conflict||!unknown&&!canSubmit)return;setError(null);setBusy(true);
     try{
       if(!operation.current){
         let body:unknown,path:string;
@@ -62,7 +62,7 @@ function InvitationDialog({me,selection,close,saved}:{me:Me;selection:Selection;
       const value=operation.current;await api(value.path,resultSchema,{body:value.body,csrf:me.csrf_token,protected:true,idempotencyKey:value.key});operation.current=null;saved();
     }catch(cause){
       if(cause instanceof z.ZodError){setError(new ApiError('VALIDATION_ERROR'));return;}
-      setError(cause);const uncertain=cause instanceof ApiError&&(cause.code==='NETWORK'||cause.code==='INTERNAL_ERROR'||cause.status>=500);setUnknown(uncertain);
+      setError(cause);const uncertain=mutationOutcomeUnknown(cause,unknown);setUnknown(uncertain);
       if(!uncertain)operation.current=null;
       if(cause instanceof ApiError&&cause.code==='REAUTH_REQUIRED'){setReauth(true);setVerified(false);}
       if(cause instanceof ApiError&&['VERSION_CONFLICT','INVITE_TERMINAL'].includes(cause.code)){setConflict(true);await loadLatest();}

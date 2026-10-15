@@ -8,7 +8,7 @@ import {MeSchema,ReauthenticatedSchema,type Me} from '@honocraft/contracts/http'
 import {ReauthenticateSchema} from '@honocraft/contracts/common';
 import {RoleDtoSchema,RoleListSchema,type RoleDto} from '@honocraft/contracts/roles';
 import {permissionDefinitions} from '@honocraft/contracts/permissions';
-import {api,ApiError,errorMessage} from './api.js';
+import {api,ApiError,errorMessage,mutationOutcomeUnknown} from './api.js';
 import type {MessageKey} from './i18n.js';
 import {useRoleLabel} from './user-role-picker.js';
 type Group='branding'|'security';
@@ -62,7 +62,7 @@ function SettingsDialog({me,queryKey,group,snapshot,close,saved}:{me:Me;queryKey
     const current=await api('/settings',SettingsSchema,{protected:true});client.setQueryData(settingKey(me),current);
     const currentMe=await api('/me',MeSchema,{protected:true});client.setQueryData(queryKey,currentMe);client.removeQueries({queryKey:['public','settings'],exact:true});saved();
   }catch(cause){setError(cause);}finally{setBusy(false);}}
-  async function submit(fields:Fields){if(confirmed||(!unknown&&(conflict||reauth||!canSubmit)))return;setBusy(true);setError(null);
+  async function submit(fields:Fields){if(busy||confirmed||reauth||(!unknown&&(conflict||!canSubmit)))return;setBusy(true);setError(null);
     try{
       if(!operation.current){const keys=security?SECURITY_SETTING_KEYS:BRANDING_SETTING_KEYS,input={...Object.fromEntries(keys.map(key=>[key,fields[key]])),expected_version:target[group].version,...(security?{confirmation:{target_id:'security',typed_label:fields.typed_label,reason:fields.reason}}:{})};
         const parsed=(security?SecurityUpdateSchema:BrandingUpdateSchema).parse(input);operation.current={key:crypto.randomUUID(),body:parsed};}
@@ -70,7 +70,7 @@ function SettingsDialog({me,queryKey,group,snapshot,close,saved}:{me:Me;queryKey
       operation.current=null;setUnknown(false);setConfirmed(true);await refresh();
     }catch(cause){
       if(cause instanceof z.ZodError){for(const issue of cause.issues){const key=(issue.path[0]==='confirmation'?issue.path[1]:issue.path[0]) as keyof Fields;if(key&&key in fields)form.setError(key,{message:t('settingFieldInvalid')});}setError(new ApiError('VALIDATION_ERROR'));}else setError(cause);
-      const uncertain=cause instanceof ApiError&&(cause.code==='NETWORK'||cause.code==='INTERNAL_ERROR'||cause.status>=500||unknown&&['REAUTH_REQUIRED','FORBIDDEN','CSRF_INVALID'].includes(cause.code));setUnknown(uncertain);if(!uncertain)operation.current=null;
+      const uncertain=mutationOutcomeUnknown(cause,unknown);setUnknown(uncertain);if(!uncertain)operation.current=null;
       if(cause instanceof ApiError&&cause.code==='REAUTH_REQUIRED'){setReauth(true);setVerified(false);}
       if(!uncertain&&cause instanceof ApiError&&['VERSION_CONFLICT','FORBIDDEN','REGISTRATION_ROLE_INVALID'].includes(cause.code)){setConflict(true);await loadLatest();if(cause.code==='REGISTRATION_ROLE_INVALID')void client.invalidateQueries({queryKey:['actor',me.user.id,'roles']});}
     }finally{setBusy(false);}

@@ -3,6 +3,11 @@ import type {MessageKey} from './i18n.js';
 export class ApiError extends Error{
   constructor(readonly code:string,readonly status=0,readonly retryAfter=60){super(code);}
 }
+/** A replay denied before its stored result is read does not resolve the original attempt. */
+export function mutationOutcomeUnknown(error:unknown,previouslyUnknown=false):boolean{
+  return error instanceof ApiError&&(error.code==='NETWORK'||error.code==='INTERNAL_ERROR'||error.status>=500||error.code==='REQUEST_IN_PROGRESS'||
+    previouslyUnknown&&['REAUTH_REQUIRED','FORBIDDEN','TARGET_NOT_MANAGEABLE','CSRF_INVALID','ORIGIN_INVALID'].includes(error.code));
+}
 let generation=0;
 export function discardSession(){generation++;}
 export const sessionEvents=new EventTarget();

@@ -7,7 +7,7 @@ import {RoleCreateSchema,RoleUpdateSchema,RoleCopySchema,RoleDeleteSchema,RoleEl
 import {ReauthenticatedSchema,type Me} from '@honocraft/contracts/http';
 import {permissionDefinitions,type PermissionCode} from '@honocraft/contracts/permissions';
 import type {PermissionDto} from '@honocraft/contracts/permission-catalog';
-import {api,ApiError,errorMessage} from './api.js';
+import {api,ApiError,errorMessage,mutationOutcomeUnknown} from './api.js';
 import {PermissionView,usePermissionCatalog} from './permission-view.js';
 export type RoleOperation='create'|'update'|'copy'|'delete'|'eligibility';
 type Fields={code:string;name:string;description:string;permission_codes:PermissionCode[];is_delegable:boolean;is_registration_default_eligible:boolean;reason:string;typed_label:string};
@@ -43,7 +43,7 @@ export function RoleDialog({me,kind,role,close,saved}:{me:Me;kind:RoleOperation;
   function draft(){if(unknown)return;operation.current=null;setError(null);form.clearErrors();}
   async function loadLatest(){if(!target)return;setBusy(true);try{setLatest(await api('/roles/'+target.id,RoleDtoSchema,{protected:true}));void client.invalidateQueries({queryKey:['actor',me.user.id,'roles']});}catch(cause){setError(cause);if(cause instanceof ApiError&&cause.status===404)setGone(true);}finally{setBusy(false);}}
   async function submit(input:Fields){
-    if(!unknown&&!canSubmit)return;setBusy(true);setError(null);
+    if(busy||reauth||conflict||!unknown&&!canSubmit)return;setBusy(true);setError(null);
     try{
       if(!operation.current){
         const confirmation={target_id:target?.id,reason:input.reason,...(typedRequired?{typed_label:input.typed_label}:{})};
@@ -65,9 +65,9 @@ export function RoleDialog({me,kind,role,close,saved}:{me:Me;kind:RoleOperation;
     }catch(cause){
       if(cause instanceof z.ZodError){for(const issue of cause.issues){const path=issue.path[0]==='confirmation'?issue.path[1]:issue.path[0],key=(path==='new_code'?'code':path==='new_name'?'name':path) as keyof Fields;if(key&&key in input)form.setError(key,{message:t('invalid')});}setError(new ApiError('VALIDATION_ERROR'));}
       else setError(cause);
-      const uncertain=cause instanceof ApiError&&(cause.code==='NETWORK'||cause.code==='INTERNAL_ERROR'||cause.status>=500);setUnknown(uncertain);if(!uncertain)operation.current=null;
+      const uncertain=mutationOutcomeUnknown(cause,unknown);setUnknown(uncertain);if(!uncertain)operation.current=null;
       if(cause instanceof ApiError&&cause.code==='REAUTH_REQUIRED'){setReauth(true);setVerified(false);}
-      if(cause instanceof ApiError&&['VERSION_CONFLICT','ROLE_IN_USE','FORBIDDEN','REGISTRATION_ROLE_IN_USE','REGISTRATION_ROLE_INVALID'].includes(cause.code)&&target){setConflict(true);await loadLatest();}
+      if(!uncertain&&cause instanceof ApiError&&['VERSION_CONFLICT','ROLE_IN_USE','FORBIDDEN','REGISTRATION_ROLE_IN_USE','REGISTRATION_ROLE_INVALID'].includes(cause.code)&&target){setConflict(true);await loadLatest();}
       if(cause instanceof ApiError&&cause.status===404)setGone(true);
     }finally{setBusy(false);}
   }

@@ -7,7 +7,7 @@ import {normalizeEmail,ReauthenticateSchema} from '@honocraft/contracts/common';
 import {UserDetailSchema,UserProfileUpdateSchema,UserStatusUpdateSchema,UserDeleteSchema,UserRolesUpdateSchema,UserPasswordResetSchema,UserProfileResultSchema,UserStatusResultSchema,UserRolesResultSchema,UserPasswordResetResultSchema,type UserAction,type UserDetail} from '@honocraft/contracts/users';
 import {AdminEmailChangeSchema,AdminEmailCancelSchema,EmailChangeStartedSchema,EmailChangeCancelledSchema} from '@honocraft/contracts/email-change';
 import {ReauthenticatedSchema,type Me} from '@honocraft/contracts/http';
-import {api,ApiError,errorMessage} from './api.js';
+import {api,ApiError,errorMessage,mutationOutcomeUnknown} from './api.js';
 import type {MessageKey} from './i18n.js';
 import {UserRolePicker,useRoleLabel} from './user-role-picker.js';
 export const userActionLabels:Record<UserAction,MessageKey>={update:'editUser',suspend:'suspendUser',enable:'enableUser',delete:'deleteUser','reset-password':'sendUserReset','change-email':'changeUserEmail','assign-roles':'assignUserRoles','cancel-email-change':'cancelUserEmail'};
@@ -22,7 +22,7 @@ export function UserDialog({me,user,kind,close,saved}:{me:Me;user:UserDetail;kin
   useEffect(()=>{const focused=document.activeElement,element=dialog.current;element?.showModal();return()=>{element?.close();if(focused instanceof HTMLElement&&focused.isConnected)focused.focus();};},[]);
   function draft(){if(unknown)return;operation.current=null;setError(null);form.clearErrors();}
   async function loadLatest(){setBusy(true);try{const current=await api('/users/'+target.id,UserDetailSchema,{protected:true});setLatest(current);client.setQueryData(['actor',me.user.id,'users','detail',target.id],current);void client.invalidateQueries({queryKey:['actor',me.user.id,'users','list']});void client.invalidateQueries({queryKey:['actor',me.user.id,'roles']});}catch(cause){setError(cause);if(cause instanceof ApiError&&cause.status===404)setGone(true);}finally{setBusy(false);}}
-  async function submit(fields:Fields){if(!unknown&&(conflict||reauth||!canSubmit))return;setBusy(true);setError(null);
+  async function submit(fields:Fields){if(busy||reauth||!unknown&&(conflict||!canSubmit))return;setBusy(true);setError(null);
     try{
       if(!operation.current){
         const identity={id:target.id,expected_version:target.version},confirmation={target_id:target.id,reason:fields.reason,...(typed?{typed_label:fields.typed_label}:{})};let input:{id:string},suffix='',method='POST';
@@ -38,9 +38,9 @@ export function UserDialog({me,user,kind,close,saved}:{me:Me;user:UserDetail;kin
       const request=operation.current;await api(request.path,resultSchema,{method:request.method,body:request.body,csrf:me.csrf_token,protected:true,idempotencyKey:request.key});operation.current=null;saved(kind);
     }catch(cause){
       if(cause instanceof z.ZodError){for(const issue of cause.issues){const field=(issue.path[0]==='confirmation'?issue.path[1]:issue.path[0]) as keyof Fields;if(field in fields)form.setError(field,{message:t('invalid')});}setError(new ApiError('VALIDATION_ERROR'));}else setError(cause);
-      const uncertain=cause instanceof ApiError&&(cause.code==='NETWORK'||cause.code==='INTERNAL_ERROR'||cause.status>=500);setUnknown(uncertain);if(!uncertain)operation.current=null;
+      const uncertain=mutationOutcomeUnknown(cause,unknown);setUnknown(uncertain);if(!uncertain)operation.current=null;
       if(cause instanceof ApiError&&cause.code==='REAUTH_REQUIRED'){setReauth(true);setVerified(false);}
-      if(cause instanceof ApiError&&['VERSION_CONFLICT','CHANGE_REQUEST_INVALID','FORBIDDEN','TARGET_NOT_MANAGEABLE','NOT_FOUND'].includes(cause.code)){setConflict(true);await loadLatest();}
+      if(!uncertain&&cause instanceof ApiError&&['VERSION_CONFLICT','CHANGE_REQUEST_INVALID','FORBIDDEN','TARGET_NOT_MANAGEABLE','NOT_FOUND'].includes(cause.code)){setConflict(true);await loadLatest();}
     }finally{setBusy(false);}
   }
   async function verify(values:{current_password:string}){setBusy(true);setError(null);const input=ReauthenticateSchema.safeParse(values);
