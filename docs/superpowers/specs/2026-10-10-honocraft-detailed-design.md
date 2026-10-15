@@ -676,6 +676,10 @@ AES-256-GCM 使用库；nonce 12 随机字节、tag 16 字节、key_id，AAD 包
 
 request_id 由服务端生成；只信任经过验证的内部链路 ID，不照收公网任意超长值。成功审计在主事务内；失败事件独立，脱敏策略覆盖应用访问日志、代理 URL、任务错误和异常堆栈上下文。
 
+审计的用户 actor_snapshot 在写入同一事务内取得当前 display_name，按审计文本规则脱敏并限制 80 码点；不复制邮箱、角色全集或凭证。以后改名、软删除不重写旧快照；旧记录没有快照时显示其 actor_type/actor_id，不根据当前用户资料伪造历史名称。
+
+日志读取接口对历史 JSON 再做字段白名单投影：未知或不符合当前安全 schema 的变更字段不公开，仍保留其余合法摘要；reason、User-Agent 和名称再次脱敏。安全事件不选择 target_digest/allowed_metadata；邮件任务只选择公开状态列，错误码限稳定枚举，未知历史错误映射 UNKNOWN_ERROR，异常邮箱掩码映射为脱敏占位符。列表与详情使用相同投影，不能以详情权限间接读取敏感载荷。
+
 ### 10.3 PostgreSQL 限流算法
 
 IP 配额按滚动时间段统计离散小 bucket：登录采用 1 秒 bucket 汇总最近 60 秒；发送 IP/地址用途采用 1 分钟 bucket 汇总最近 60 分钟。包含整个边界 bucket，最多多限制一个 bucket 宽度，不允许固定整点窗口瞬间翻倍。每 scope/key 另有 sentinel bucket（window_start 为固定 epoch）供 `FOR UPDATE` 串行化求和/递增；清理任务不删除活跃 sentinel。

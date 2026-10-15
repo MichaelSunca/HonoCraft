@@ -28,6 +28,7 @@ import {createUserQueries} from '../modules/users/queries.js';
 import {createUserManagement} from '../modules/users/management.js';
 import {createEmailChange} from '../modules/users/email-change.js';
 import {createSettingsManagement} from '../modules/settings/management.js';
+import {createLogQueries} from '../modules/audit/queries.js';
 import { createClientIpResolver } from './security.js';
 import {createSessionManagement} from '../modules/auth/session-management.js';
 import {createAccountSecurity} from '../modules/auth/account-security.js';
@@ -52,6 +53,7 @@ export function createHttpApp({pool,config,passwords,secrets,webRoot}:AppDepende
   const userManagement=createUserManagement(pool,secrets);
   const emailChange=createEmailChange(pool,secrets);
   const settingsManagement=createSettingsManagement(pool,secrets);
+  const logQueries=createLogQueries(pool,secrets.epoch);
   const roleManagement=createRoleManagement(pool,secrets);
   const permissionQueries=createPermissionQueries(pool,secrets.epoch);
   const login=createLoginService(pool,{epoch:secrets.epoch,digestKey:secrets.digestKey.key},passwords);
@@ -130,6 +132,10 @@ export function createHttpApp({pool,config,passwords,secrets,webRoot}:AppDepende
   app.get('/api/v1/invites',async c=>c.json({data:await invitationQueries.list(actorRef(c),c.req.query()),request_id:c.get('requestId')}));
   app.get('/api/v1/permissions',async c=>c.json({data:await permissionQueries.list(actorRef(c),c.req.query()),request_id:c.get('requestId')}));
   app.get('/api/v1/settings',async c=>c.json({data:await settingsManagement.read(actorRef(c),c.req.query()),request_id:c.get('requestId')}));
+  for(const [path,queries] of [['audit-events',logQueries.audit],['security-events',logQueries.security],['email-tasks',logQueries.mail]] as const){
+    app.get('/api/v1/'+path,async c=>c.json({data:await queries.list(actorRef(c),c.req.query()),request_id:c.get('requestId')}));
+    app.get('/api/v1/'+path+'/:id',async c=>c.json({data:await queries.get(actorRef(c),c.req.param('id')),request_id:c.get('requestId')}));
+  }
   for(const [group,action] of [['branding',settingsManagement.branding],['security',settingsManagement.security]] as const){
     app.patch('/api/v1/settings/'+group,async c=>{const result=await action(actorRef(c),await parseJson(()=>c.req.json()),c.get('meta'),c.req.header('idempotency-key'),remaining(c));return c.json({data:result.data,replayed:result.replayed,request_id:c.get('requestId')},result.status as ContentfulStatusCode);});
   }
