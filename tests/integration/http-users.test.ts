@@ -45,14 +45,14 @@ it('masks protected targets and hides secret fields while retaining own email vi
   for(const secret of ['private-admin@','password_hash','password_version','authorization_version','test-hash-not-for-login','token_hash','sessionId'])expect(JSON.stringify(data)).not.toContain(secret);
   expect((await (await get('/users/'+actor.userId,actor)).json()).data).toMatchObject({email_visibility:'full',email:actor.userId+'@example.test'});
   const member=(await (await get('/users/'+ordinary.userId,actor)).json()).data;
-  expect(member.allowed_actions).toEqual(['update','suspend','delete','reset-password','change-email','assign-roles']);expect(member.requires_reauth_actions).toEqual(['change-email']);
+  expect(member.allowed_actions).toEqual(['update','suspend','delete','reset-password','change-email','assign-roles']);expect(member.requires_reauth_actions).toEqual(['change-email']);expect(member.requires_typed_confirmation_actions).toEqual(['delete']);
 });
 it('bases capabilities on current full role scope and real super administrator identity',async()=>{
   const actor=await identity(database.pool,'admin'),target=await identity(database.pool),superAdmin=await identity(database.pool,'super_admin');
   await custom(target,['role:delegate'],false);
   expect((await (await get('/users/'+target.userId,actor)).json()).data).toMatchObject({email_visibility:'masked',allowed_actions:[]});
   const high=(await (await get('/users/'+target.userId,superAdmin)).json()).data;
-  expect(high.email_visibility).toBe('full');expect(high.requires_reauth_actions).toEqual(high.allowed_actions);
+  expect(high.email_visibility).toBe('full');expect(high.requires_reauth_actions).toEqual(high.allowed_actions);expect(high.requires_typed_confirmation_actions).toEqual(high.allowed_actions);
   await custom(actor,['user:manage-privileged']);
   expect((await (await get('/users/'+target.userId,actor)).json()).data).toMatchObject({email_visibility:'masked',allowed_actions:[]});
   const own=(await (await get('/users/'+superAdmin.userId,superAdmin)).json()).data;

@@ -569,7 +569,7 @@ MeDto：`user:{id,email,display_name,status,email_verified_at,avatar_url,locale,
 
 UserListItem：id、display_name、email、avatar_url、roles{id,code,name}、status、created_at、last_login_at、version、allowed_actions。高权限目标邮箱对缺乏管理范围者使用 masked_email，email=null；本人或可管理者可见完整 email，DTO 显式 `email_visibility:full/masked`。详情增加 verified、updated_at、可见的邮箱变更摘要与审计入口条件；不返回 session 列表、密码属性及原始安全事件。
 
-读取契约补充：列表与详情均含 `requires_reauth_actions`；动作 Code 为 update、suspend、enable、delete、reset-password、change-email、assign-roles、cancel-email-change。资格同时考虑当前具体权限、完整目标角色范围、本人保护和状态；近期验证摘要描述操作要求，不因本次会话刚验证而省略。Deleted 缺省隐藏，显式 status=deleted 可查询历史详情但没有写操作。排序同值时追加同方向 ID；created_from 包含、created_to 不包含。缺乏范围的邮箱按首字符与域名脱敏，query 的邮箱匹配及 email 排序也只使用可见值，避免通过查询反推隐藏地址。
+读取契约补充：列表与详情均含 `requires_reauth_actions` 和 `requires_typed_confirmation_actions`；动作 Code 为 update、suspend、enable、delete、reset-password、change-email、assign-roles、cancel-email-change。资格同时考虑当前具体权限、完整目标角色范围、本人保护和状态；近期验证摘要描述操作要求，不因本次会话刚验证而省略。输入确认摘要包含删除及高权限目标的可用操作，普通邮箱变更不会因要求近期验证而额外要求输入目标邮箱；拟授予角色造成的新高风险仍在提交时完整校验。Deleted 缺省隐藏，显式 status=deleted 可查询历史详情但没有写操作。排序同值时追加同方向 ID；created_from 包含、created_to 不包含。缺乏范围的邮箱按首字符与域名脱敏，query 的邮箱匹配及 email 排序也只使用可见值，避免通过查询反推隐藏地址。
 
 UserDetailDto 增加 `can_read_audit`（当前 audit:read）和 `pending_email_change:{id,version,new_email,expires_at}|null`。未到期待变更摘要仅本人或当前仍具 user:update-email 和目标范围的原发起者可见；不让其他管理者因拥有读取权限而看到尚未验证的新地址。读取到的动作资格不替代实际写入时的完整校验。
 

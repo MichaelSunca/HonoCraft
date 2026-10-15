@@ -46,7 +46,7 @@ async function project(tx:Tx,context:SessionContext,rows:Row[],detail:boolean){
     const visibleRequest=request&&(self||(manageable&&context.permissions.has('user:update-email')&&request.requested_by===context.actor.userId))?request:null;
     if(visibleRequest&&row.status!=='deleted'&&row.status!=='suspended'&&visibleRequest.requested_by===context.actor.userId)add('cancel-email-change','user:update-email');
     const dto=UserListItemSchema.parse({id:row.id,display_name:row.display_name,email:visible?row.email:null,masked_email:visible?null:maskEmail(row.email),email_visibility:visible?'full':'masked',
-      avatar_url:row.avatar_url,roles:row.roles,status:row.status,created_at:row.created_at.toISOString(),last_login_at:row.last_login_at?.toISOString()??null,version:row.version,allowed_actions:actions,requires_reauth_actions:recent});
+      avatar_url:row.avatar_url,roles:row.roles,status:row.status,created_at:row.created_at.toISOString(),last_login_at:row.last_login_at?.toISOString()??null,version:row.version,allowed_actions:actions,requires_reauth_actions:recent,requires_typed_confirmation_actions:actions.filter(action=>high||action==='delete')});
     return detail?UserDetailSchema.parse({...dto,verified:row.email_verified_at!==null,updated_at:row.updated_at.toISOString(),can_read_audit:context.permissions.has('audit:read'),
       pending_email_change:visibleRequest?{id:visibleRequest.id,version:visibleRequest.version,new_email:visibleRequest.new_email,expires_at:visibleRequest.expires_at.toISOString()}:null}):dto;
   });

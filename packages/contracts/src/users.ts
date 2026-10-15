@@ -11,7 +11,7 @@ export type UserAction=z.infer<typeof UserActionSchema>;
 export const UserListItemSchema=z.strictObject({
   id:z.uuid(),display_name:z.string(),email:z.string().nullable(),masked_email:z.string().nullable(),email_visibility:z.enum(['full','masked']),avatar_url:z.string().nullable(),
   roles:z.array(z.strictObject({id:z.uuid(),code:z.string(),name:z.string()})),status:UserStatusSchema,created_at:z.iso.datetime(),last_login_at:z.iso.datetime().nullable(),version:VersionSchema,
-  allowed_actions:z.array(UserActionSchema),requires_reauth_actions:z.array(UserActionSchema),
+  allowed_actions:z.array(UserActionSchema),requires_reauth_actions:z.array(UserActionSchema),requires_typed_confirmation_actions:z.array(UserActionSchema),
 });
 export const UserDetailSchema=UserListItemSchema.extend({
   verified:z.boolean(),updated_at:z.iso.datetime(),can_read_audit:z.boolean(),
