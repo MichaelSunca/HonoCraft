@@ -1,9 +1,9 @@
 import {z} from 'zod';
 import {AppError} from '@honocraft/contracts/errors';
-import {LocaleSchema,ThemeSchema,text} from '@honocraft/contracts/common';
+import {BrandingValueSchema} from '@honocraft/contracts/settings';
 import type {Tx} from '../../infrastructure/db.js';
-const brandingSchema=z.object({instance_name:text(1,80),copyright:z.string(),default_locale:LocaleSchema,default_theme:ThemeSchema,timezone:z.string(),logo_file_id:z.uuid().nullable(),favicon_file_id:z.uuid().nullable()});
-const securitySchema=z.object({registration_open:z.boolean(),password_min_length:z.number().int().min(15).max(128)});
+const brandingSchema=BrandingValueSchema;
+const securitySchema=z.object({registration_open:z.boolean(),password_min_length:z.number().int().min(15).max(64)});
 export async function loadPublicSettings(tx:Tx) {
   const row=(await tx.query<{branding:unknown;security:unknown;initialization_status:string}>(`SELECT b.typed_value AS branding,s.typed_value AS security,i.initialization_status
     FROM system_settings b CROSS JOIN system_settings s CROSS JOIN system_state i WHERE b.key='branding' AND s.key='security' AND i.id=1`)).rows[0];

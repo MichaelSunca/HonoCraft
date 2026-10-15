@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { errorStatus } from '@honocraft/contracts/errors';
 import { PERMISSION_CODES } from '@honocraft/contracts/permissions';
+import {BRANDING_SETTING_KEYS,SECURITY_SETTING_KEYS,SecurityFieldsSchema} from '@honocraft/contracts/settings';
 import type { Tx } from '../../infrastructure/db.js';
 
 /** Free text is never copied verbatim to audit or access logs. */
@@ -13,6 +14,7 @@ export function sanitizeAuditText(text: string): string {
 }
 const maskedEmail=z.string().max(254).refine(value=>value.includes('*'));
 const changesSchema=z.strictObject({
+  setting_keys:z.array(z.enum([...BRANDING_SETTING_KEYS,...SECURITY_SETTING_KEYS])).optional(),settings_before:SecurityFieldsSchema.partial().optional(),settings_after:SecurityFieldsSchema.partial().optional(),
   before_version:z.number().int().positive().optional(), after_version:z.number().int().positive().optional(),
   affected_count:z.number().int().nonnegative().optional(),
   is_delegable_before:z.boolean().optional(),is_delegable_after:z.boolean().optional(),

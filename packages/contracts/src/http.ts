@@ -2,7 +2,7 @@ import {z} from 'zod';
 import {DisplayNameSchema,LocaleSchema,ThemeSchema,UserStatusSchema,VersionSchema} from './common.js';
 export const PublicSettingsSchema=z.object({
   instance_name:z.string(),copyright:z.string(),default_locale:LocaleSchema,default_theme:ThemeSchema,timezone:z.string(),
-  logo_url:z.string().nullable(),favicon_url:z.string().nullable(),registration_open:z.boolean(),password_min_length:z.number().int().min(15).max(128),initialized:z.boolean(),
+  logo_url:z.string().nullable(),favicon_url:z.string().nullable(),registration_open:z.boolean(),password_min_length:z.number().int().min(15).max(64),initialized:z.boolean(),
 });
 export const SelfProfileSchema=z.strictObject({id:z.uuid(),display_name:DisplayNameSchema,locale:LocaleSchema.nullable(),theme:ThemeSchema.nullable(),version:VersionSchema});
 export const MeSchema=z.object({
