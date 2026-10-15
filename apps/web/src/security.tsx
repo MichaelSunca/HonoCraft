@@ -8,6 +8,7 @@ import {ChangePasswordSchema,ReauthenticateSchema} from '@honocraft/contracts/co
 import {MeSchema,ReauthenticatedSchema,SessionListSchema,type Me} from '@honocraft/contracts/http';
 import {api,ApiError,errorMessage} from './api.js';
 import {useSession} from './session.js';
+import {SelfEmailPanel} from './self-email.js';
 function time(value:string,locale:string,zone:string){return new Intl.DateTimeFormat(locale,{dateStyle:'medium',timeStyle:'long',timeZone:zone}).format(new Date(value));}
 export function SecurityPage({me,queryKey}:{me:Me;queryKey:(string|number)[]}){
   const {t,i18n}=useTranslation(),client=useQueryClient(),session=useSession();
@@ -15,7 +16,7 @@ export function SecurityPage({me,queryKey}:{me:Me;queryKey:(string|number)[]}){
   const change=useForm<{current_password:string;new_password:string;confirm:string}>({defaultValues:{current_password:'',new_password:'',confirm:''}});
   const [verificationError,setVerificationError]=useState<unknown>(null),[changeError,setChangeError]=useState<unknown>(null),[verifiedUntil,setVerifiedUntil]=useState<string|null>(null),[version,setVersion]=useState(me.user.version),[conflict,setConflict]=useState(false),[refreshing,setRefreshing]=useState(false);
   const changeKey=useRef<string|null>(null);
-  async function verify(values:{current_password:string}){setVerificationError(null);setVerifiedUntil(null);const input=ReauthenticateSchema.safeParse(values);if(!input.success){setVerificationError(new ApiError('VALIDATION_ERROR'));return;}
+  async function verify(values:{current_password:string}){setVerificationError(null);setVerifiedUntil(null);const input=ReauthenticateSchema.safeParse(values);if(!input.success){verification.reset();setVerificationError(new ApiError('VALIDATION_ERROR'));return;}
     try{const result=await api('/auth/reauthenticate',ReauthenticatedSchema,{body:input.data,csrf:me.csrf_token,protected:true});setVerifiedUntil(result.valid_until);client.setQueryData<Me>(queryKey,old=>old?{...old,session:{...old.session,reauthenticated_at:result.reauthenticated_at}}:old);}
     catch(error){setVerificationError(error);}finally{verification.reset();}
   }
@@ -33,7 +34,7 @@ export function SecurityPage({me,queryKey}:{me:Me;queryKey:(string|number)[]}){
     <section className="panel"><h2>{t('changePassword')}</h2><p className="muted">{t('changePasswordHelp')}</p><form aria-label={t('changePassword')} noValidate onChange={()=>{changeKey.current=null;}} onSubmit={change.handleSubmit(update)}>
       {(['current_password','new_password','confirm'] as const).map(name=><div className="field" key={name}><label htmlFor={'change-'+name}>{t(name==='current_password'?'currentPassword':name==='new_password'?'newPassword':'confirmPassword')}</label><input id={'change-'+name} type="password" autoComplete={name==='current_password'?'current-password':'new-password'} {...change.register(name,{required:t('required')})} aria-invalid={!!change.formState.errors[name]} aria-describedby={change.formState.errors[name]?'error-'+name:undefined}/>{change.formState.errors[name]&&<span id={'error-'+name} className="field-error">{change.formState.errors[name]?.message}</span>}</div>)}
       <p className="hint">{t('passwordHint',{minimum:me.instance.password_min_length})}</p>{!!changeError&&<div role="alert" className="notice error">{conflict?t('passwordVersionConflict'):describe(changeError)}{conflict&&<button type="button" disabled={refreshing} onClick={()=>void reloadVersion()}>{t('reloadVersion')}</button>}</div>}<button className="primary" disabled={change.formState.isSubmitting||conflict||refreshing}>{t(change.formState.isSubmitting?'submitBusy':'changePassword')}</button>
-    </form></section></div></>;
+    </form></section><SelfEmailPanel me={me} queryKey={queryKey}/></div></>;
 }
 const replay=z.object({outcome:z.enum(['session_revoked','other_sessions_revoked']),resource_id:z.uuid().nullable(),version:z.number().nullable(),completed_at:z.string()});
 const revocation=z.union([z.object({revoked:z.literal(true),is_current:z.boolean()}),z.object({revoked_count:z.number().int().nonnegative()}),replay]);
