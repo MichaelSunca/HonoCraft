@@ -197,6 +197,7 @@ appendAudit(tx: Tx, event: AllowedAuditEvent): Promise<UUID>;
 | `rate_limit_buckets` | scope text；key_digest bytea；window_start timestamptz；count integer；expires_at timestamptz；locked_until/last_accepted_at/failure_window_started_at timestamptz? | PK(scope,key_digest,window_start)；count>=0；账号失败状态使用固定标识行，见 §10.3；摘要 key_id 属部署配置版本，轮换时需有明确限流重置操作 |
 | `email_tasks` | id uuid；event_key text；purpose text；recipient varchar(254)?；recipient_masked text；credential_id uuid?；payload_ciphertext/nonce/auth_tag bytea?；key_id text?；template_version integer；locale text；status text；attempts integer；next_attempt_at timestamptz；lease_owner uuid?；lease_version integer=0；lease_expires_at timestamptz?；provider_message_id/error_code text?；created_at/updated_at timestamptz | event_key UNIQUE；queued/sending/sent/failed/cancelled；attempts 0..3；sending 必须有租约；queued 到期领取索引、sending 租约到期索引；终态删除载荷与完整收件人，只留脱敏地址 |
 | `file_objects` | id uuid；storage_key text；owner_id uuid?；purpose text；state text；content_type text；byte_size bigint；width/height integer；created_at/updated_at timestamptz；lease_expires_at timestamptz? | key UNIQUE，不接收客户端 key；purpose avatar/brand_logo/brand_favicon；state staged/attached/orphaned/deleting；avatar 必有 owner；按 state/created_at 回收；品牌的引用由 branding schema 保存并在服务内验证 |
+| `file_variants` | file_id uuid FK file_objects；size smallint；storage_key text UNIQUE；byte_size bigint | PK(file_id,size)；P0 仅 size=32 的 Favicon PNG，key 固定为 file_id-32.png；与父文件共享授权和生命周期，父文件保留 64px 主图 |
 | `example_notes` | id/owner_id uuid；title varchar(120)；body text；version integer；created_at/updated_at timestamptz | owner FK RESTRICT；标题 1–120 码点、正文 0–20000 码点；`(owner_id,created_at DESC,id DESC)`；删除笔记硬删，用户软删不级联 |
 
 `purpose_metadata`、settings、policy_context、result_summary 均由对应版本 schema 校验。幂等 `policy_context` 仅含重新授权所需的目标/角色 ID 与操作模式；不能凭保存的旧权限快照授权。
@@ -548,8 +549,8 @@ API 前缀 `/api/v1`；字段 snake_case；请求与响应分别定义严格 sch
 | POST `/me/sessions/revoke-others` | I；空对象 | `{revoked_count}` / 200 |
 | POST `/me/email-change` | I、R、V(user)；new_email | `{request_id,request_version,user_version,expires_at}` / 202 |
 | DELETE `/me/email-change` | I；V(user)、request_id,request_version | `{cancelled:true,user_version}` / 200 |
-| PUT `/me/avatar` | multipart file + V(user)，本人 | `{avatar_url,user_version}` / 200 |
-| DELETE `/me/avatar` | V(user) | `{avatar_url:null,user_version}` / 200 |
+| PUT `/me/avatar` | multipart file + V(user)，本人；I | `{avatar_url,user_version}` / 200 |
+| DELETE `/me/avatar` | V(user)；I | `{avatar_url:null,user_version}` / 200 |
 
 MeDto：`user:{id,email,display_name,status,email_verified_at,avatar_url,locale,theme,version}`、roles 简要列表、permission_codes、csrf_token、session:{id,reauthenticated_at,absolute_expires_at}、pending_email_change（仅本人，含请求 ID/version/新邮箱/到期）、instance 非敏感展示值。所有认证查询 no-store；MeDto 不返回 password_version、hash、原始 session 或 token_hash。
 
@@ -802,6 +803,14 @@ worker 每分钟处理租约/凭证/请求到期，每小时回收无引用文�
 3. 建 file_objects staged（处理租约最长 10分钟），随机路径写临时文件并原子 rename 到存储 key；失败保留可回收记录，当前头像不变。
 4. SHARE 协调事务按锁顺序检查操作者/目标版本，锁 file_objects 且确认 staged 未过期；关联新文件、附着状态、原引用转 orphaned、版本/审计共同提交。
 5. 回收只处理 staged/orphaned 超过 24小时且无引用的对象；锁行再查引用并标 deleting，提交后删物理文件，再删元数据；崩溃重复处理 deleting，文件不存在视为幂等成功。
+
+Favicon 的 64px PNG 为主文件，32px PNG 保存在 file_variants，同一父文件的授权、引用和 staged/attached/orphaned/deleting 状态覆盖全部变体。GET `/media/branding/:fileId?size=32|64` 仅对当前 Favicon 支持 size；省略时返回主图，Logo 不接受 size。回收父文件时先处理主文件与全部变体的物理文件，再删除父元数据。
+
+图片工作在独立 Node 工作线程执行，整个处理阶段按墙钟五秒截止并终止停滞线程，槽位在真正退出后才释放；同进程最多两路。只将实际签名为 PNG/JPEG/WebP 的输入交给解码器，多帧拒绝。生成完成后先在同一事务创建主/变体暂存元数据，再写随机临时文件、同步内容、原子 rename 并同步目录，最后进入授权/版本/引用变更事务；任何阶段失败不改原引用。
+
+媒体写入幂等摘要绑定操作、原始图片 SHA-256 和 expected_version，不包含每次生成的随机候选 ID；同键重试产生但未使用的候选保持可回收，不重复附着或递增版本。历史重放只返回 outcome、resource_id、version、completed_at；前端必须再读当前资料/设置。文件名、客户端 MIME、owner_id、storage_key 或外部 URL 不可决定存储或关联。
+
+头像只允许本人，或具有 user:read 且符合当前目标完整资料管理范围者读取；范围外资料摘要同时隐藏 avatar_url，读取接口返回 404。品牌仅当前已附着资源可公开读取，旧引用与未附着候选不可读取。HTTP JSON 与上传分别按 HTTP_TIMEOUT_MS、UPLOAD_TIMEOUT_MS 截止；超限/超时或尚未读完正文的拒绝响应关闭连接，避免客户端复用即将被排空的连接。
 
 写文件前先建元数据，防止 worker 把上传中的无记录文件当孤立文件。极少数元数据失败残留临时文件按相同年龄窗口扫描；不能递归删除媒体根目录或接受客户端相对路径。生产存储根来自部署配置，生成 key 不含 `..` 或路径分隔符。
 

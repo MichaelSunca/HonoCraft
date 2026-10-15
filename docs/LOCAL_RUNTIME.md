@@ -246,3 +246,22 @@ query 去除首尾空格后为空或 2–100 码点，`%`、`_` 按字面搜索�
 日志页面位于 `/audit`、`/security-events`、`/email-tasks`，导航与直接 URL 访问按对应读取权限独立控制。筛选、排序、分页保留在 URL；前端 `detail=<UUID>` 打开详情抽屉，不传入列表 API。刷新页面可恢复详情，关闭/键盘 Escape 保留原筛选并恢复来源焦点。列表及详情提供显式重读，详情刷新也更新列表；这不改变任务状态或触发邮件发送。用户详情的「查看审计记录」按 user 目标类型/ID 跳转。邮件详情展示稳定错误说明与掩码、任务时间及供应商受理语义，必要时链接邀请或用户管理原流程。
 
 角色、邀请、用户管理、本人邮箱变更和设置表单共享不确定结果判定。除网络/5xx/响应无法解释外，REQUEST_IN_PROGRESS 也保持原请求和幂等键。已不确定的请求重试被近期验证、权限或 CSRF/Origin 等前置门禁拒绝时，继续保留原尝试；这些拒绝不能说明之前没有提交。验证通过后必须再次明确重试，验证期间禁用原业务提交，不能改用新键重新发信或覆盖角色版本。
+
+## 受控头像与品牌图片 API
+
+先运行 `pnpm db:migrate` 应用 `0005_file_variants.sql`，再启动当前版本；应用启动不会自动迁移。当前源码入口会加载 `modules/files/image-worker.mjs`，后续编译/镜像交付须保留该工作线程文件。
+
+| 路径（相对 `/api/v1`） | 权限与输入 | 结果 |
+| --- | --- | --- |
+| PUT `/me/avatar` | 本人有效会话；multipart 仅一个 file 与 expected_version | avatar_url/user_version |
+| DELETE `/me/avatar` | 本人；JSON expected_version | avatar_url=null/user_version |
+| PUT `/settings/branding/logo`、`/favicon` | settings:update-branding；同样 multipart，使用 branding 组版本 | url/version |
+| DELETE `/settings/branding/logo`、`/favicon` | settings:update-branding；JSON expected_version | url=null/version |
+| GET `/media/avatars/:fileId` | 本人或 user:read 且当前完整目标范围允许 | 仅当前附着头像；no-store |
+| GET `/media/branding/:fileId` | 公开；仅当前品牌引用 | 主图；public immutable |
+
+所有写入均要求精确 Origin、CSRF 和 UUID Idempotency-Key。输入单文件最多 2 MiB，总请求最多 3 MiB；拒绝未知/重复字段。只接受实际 PNG/JPEG/WebP，拒绝 SVG、多帧、损坏内容及超过 1600 万解码像素。工作线程五秒硬截止、进程并发两路；头像重编码为 256×256 WebP，Logo 等比最长边 512 WebP，Favicon 64px 主 PNG 与 32px 变体。Favicon 可通过 `?size=32` 或 `?size=64` 读取；其他尺寸/Logo size 参数拒绝。
+
+存储 key 由服务器生成，不使用原文件名或客户端路径。先建主/变体 staged 元数据，再写临时文件、同步与原子 rename，最后同事务复核当前权限、组版本、租约、引用、审计和幂等。失败保留原引用，候选转为可回收；本轮尚未接入实际文件回收任务，暂存/孤立文件不会自动删除。相同键重试按原始图片摘要和版本识别，不把随机候选 ID 当作新正文；成功重放仅返回最小结果摘要，随后重读当前 me/settings。
+
+API 请求使用配置中的 JSON/上传两种期限（缺省 15/30 秒），超时返回 BUSY_RETRY；图片自身处理截止更早。未完成正文的早期拒绝、超限与超时会明确关闭 HTTP 连接。图片页面、浏览器文件选择、品牌展示与文件回收随后接入。

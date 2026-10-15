@@ -13,7 +13,7 @@ type Row={id:string;email:string;display_name:string;status:'pending'|'active'|'
   roles:Array<{id:string;code:string;name:string}>};
 type Pending={id:string;user_id:string;requested_by:string;version:number;new_email:string;expires_at:Date};
 const projection=`u.id,u.email,u.display_name,u.status,u.creation_source,u.registration_role_id,u.version,u.email_verified_at,u.created_at,u.updated_at,u.last_login_at,
-  CASE WHEN u.avatar_file_id IS NULL THEN NULL ELSE '/api/v1/files/'||u.avatar_file_id::text END AS avatar_url,
+  CASE WHEN u.avatar_file_id IS NULL THEN NULL ELSE '/api/v1/media/avatars/'||u.avatar_file_id::text END AS avatar_url,
   COALESCE((SELECT jsonb_agg(jsonb_build_object('id',r.id,'code',r.code,'name',r.name) ORDER BY r.code,r.id)
     FROM user_roles ur JOIN roles r ON r.id=ur.role_id WHERE ur.user_id=u.id),'[]'::jsonb) AS roles`;
 function scope(context:SessionContext,row:Row,roles:RoleSnapshot[]){
@@ -46,7 +46,7 @@ async function project(tx:Tx,context:SessionContext,rows:Row[],detail:boolean){
     const visibleRequest=request&&(self||(manageable&&context.permissions.has('user:update-email')&&request.requested_by===context.actor.userId))?request:null;
     if(visibleRequest&&row.status!=='deleted'&&row.status!=='suspended'&&visibleRequest.requested_by===context.actor.userId)add('cancel-email-change','user:update-email');
     const dto=UserListItemSchema.parse({id:row.id,display_name:row.display_name,email:visible?row.email:null,masked_email:visible?null:maskEmail(row.email),email_visibility:visible?'full':'masked',
-      avatar_url:row.avatar_url,roles:row.roles,status:row.status,created_at:row.created_at.toISOString(),last_login_at:row.last_login_at?.toISOString()??null,version:row.version,allowed_actions:actions,requires_reauth_actions:recent,requires_typed_confirmation_actions:actions.filter(action=>high||action==='delete')});
+      avatar_url:row.id===context.actor.userId||manageable?row.avatar_url:null,roles:row.roles,status:row.status,created_at:row.created_at.toISOString(),last_login_at:row.last_login_at?.toISOString()??null,version:row.version,allowed_actions:actions,requires_reauth_actions:recent,requires_typed_confirmation_actions:actions.filter(action=>high||action==='delete')});
     return detail?UserDetailSchema.parse({...dto,verified:row.email_verified_at!==null,updated_at:row.updated_at.toISOString(),can_read_audit:context.permissions.has('audit:read'),
       pending_email_change:visibleRequest?{id:visibleRequest.id,version:visibleRequest.version,new_email:visibleRequest.new_email,expires_at:visibleRequest.expires_at.toISOString()}:null}):dto;
   });

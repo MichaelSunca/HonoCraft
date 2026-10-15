@@ -29,6 +29,7 @@ import {createUserManagement} from '../modules/users/management.js';
 import {createEmailChange} from '../modules/users/email-change.js';
 import {createSettingsManagement} from '../modules/settings/management.js';
 import {createLogQueries} from '../modules/audit/queries.js';
+import {createMediaService} from '../modules/files/service.js';
 import { createClientIpResolver } from './security.js';
 import {createSessionManagement} from '../modules/auth/session-management.js';
 import {createAccountSecurity} from '../modules/auth/account-security.js';
@@ -54,6 +55,7 @@ export function createHttpApp({pool,config,passwords,secrets,webRoot}:AppDepende
   const emailChange=createEmailChange(pool,secrets);
   const settingsManagement=createSettingsManagement(pool,secrets);
   const logQueries=createLogQueries(pool,secrets.epoch);
+  const media=createMediaService(pool,secrets,config.fileStorageRoot);
   const roleManagement=createRoleManagement(pool,secrets);
   const permissionQueries=createPermissionQueries(pool,secrets.epoch);
   const login=createLoginService(pool,{epoch:secrets.epoch,digestKey:secrets.digestKey.key},passwords);
@@ -61,6 +63,7 @@ export function createHttpApp({pool,config,passwords,secrets,webRoot}:AppDepende
   const sessions=createSessionManagement(pool,secrets),accountSecurity=createAccountSecurity(pool,secrets,passwords);
   const actorRef=(c:Context<HttpEnvironment>)=>({token:getCookie(c,config.sessionCookieName)??'',csrfToken:c.req.header('x-csrf-token')??''});
   const remaining=(c:Context<HttpEnvironment>)=>config.httpTimeoutMs-(performance.now()-c.get('startedAt'));
+  const isUpload=(c:Context<HttpEnvironment>)=>c.req.method==='PUT'&&(c.req.path==='/api/v1/me/avatar'||/^\/api\/v1\/settings\/branding\/(logo|favicon)$/.test(c.req.path));
   const cookieOptions={path:'/',httpOnly:true,secure:config.secureCookies,sameSite:'Lax' as const};
   app.use('*',async(c,next)=>{
     c.set('requestId',randomUUID());c.set('startedAt',performance.now());
@@ -74,16 +77,21 @@ export function createHttpApp({pool,config,passwords,secrets,webRoot}:AppDepende
     await next();
   });
   app.use('/api/*',async(c,next)=>{
+    let timer:ReturnType<typeof setTimeout>|undefined;
+    try{await Promise.race([next(),new Promise<never>((_resolve,reject)=>{timer=setTimeout(()=>{c.header('Connection','close');reject(new AppError('BUSY_RETRY',{},2));},Math.max(1,(isUpload(c)?config.uploadTimeoutMs:config.httpTimeoutMs)-(performance.now()-c.get('startedAt'))));})]);}
+    finally{if(timer)clearTimeout(timer);}
+  });
+  app.use('/api/*',async(c,next)=>{
     if(!['GET','HEAD','OPTIONS'].includes(c.req.method)){
       if(c.req.header('origin')!==config.origin)throw new AppError('ORIGIN_INVALID');
-      if(c.req.header('content-type')?.split(';')[0]?.trim().toLowerCase()!=='application/json'||
+      if(c.req.header('content-type')?.split(';')[0]?.trim().toLowerCase()!==(isUpload(c)?'multipart/form-data':'application/json')||
         !['identity',undefined].includes(c.req.header('content-encoding')))throw new AppError('UNSUPPORTED_MEDIA_TYPE');
     }
     await next();
   });
-  app.use('/api/*',bodyLimit({maxSize:64*1024,onError:()=>{throw new AppError('PAYLOAD_TOO_LARGE');}}));
+  app.use('/api/*',(c,next)=>bodyLimit({maxSize:isUpload(c)?3*1024*1024:64*1024,onError:()=>{c.header('Connection','close');throw new AppError('PAYLOAD_TOO_LARGE');}})(c,next));
   app.use('/api/*',async(c,next)=>{
-    if(!['/api/v1/public/settings','/api/v1/auth/bootstrap/complete'].includes(c.req.path)){
+    if(!['/api/v1/public/settings','/api/v1/auth/bootstrap/complete'].includes(c.req.path)&&!c.req.path.startsWith('/api/v1/media/branding/')){
       const state=(await pool.query<{initialization_status:string}>('SELECT initialization_status FROM system_state WHERE id=1')).rows[0];
       if(state?.initialization_status!=='initialized')throw new AppError('SYSTEM_NOT_INITIALIZED');
     }
@@ -91,6 +99,8 @@ export function createHttpApp({pool,config,passwords,secrets,webRoot}:AppDepende
   });
   app.onError((error,c)=>{
     const safe=error instanceof AppError?error:new AppError('INTERNAL_ERROR');
+    const incoming=(c.env as {incoming?:{complete:boolean}}|undefined)?.incoming;
+    if(incoming&&!incoming.complete)c.header('Connection','close');
     if(safe.retryAfter)c.header('Retry-After',String(safe.retryAfter));
     if(safe.code==='SESSION_INVALID')deleteCookie(c,config.sessionCookieName,cookieOptions);
     return c.json({error:{code:safe.code,message:safe.code,field_errors:safe.fieldErrors},request_id:c.get('requestId')},safe.status);
@@ -132,6 +142,17 @@ export function createHttpApp({pool,config,passwords,secrets,webRoot}:AppDepende
   app.get('/api/v1/invites',async c=>c.json({data:await invitationQueries.list(actorRef(c),c.req.query()),request_id:c.get('requestId')}));
   app.get('/api/v1/permissions',async c=>c.json({data:await permissionQueries.list(actorRef(c),c.req.query()),request_id:c.get('requestId')}));
   app.get('/api/v1/settings',async c=>c.json({data:await settingsManagement.read(actorRef(c),c.req.query()),request_id:c.get('requestId')}));
+  for(const asset of ['avatar','logo','favicon'] as const){
+    const path=asset==='avatar'?'/api/v1/me/avatar':'/api/v1/settings/branding/'+asset;
+    app.put(path,async c=>{
+      await media.preflight(actorRef(c),asset);let form:FormData;try{form=await c.req.formData();}catch{throw new AppError('VALIDATION_ERROR');}
+      if([...form.keys()].some(key=>!['file','expected_version'].includes(key))||form.getAll('file').length!==1||form.getAll('expected_version').length!==1)throw new AppError('VALIDATION_ERROR');
+      const file=form.get('file'),version=form.get('expected_version');if(!(file instanceof File)||typeof version!=='string'||!/^\d+$/.test(version))throw new AppError('VALIDATION_ERROR');if(file.size>2*1024*1024)throw new AppError('PAYLOAD_TOO_LARGE');
+      const result=await media.mutate(actorRef(c),asset,{expected_version:Number(version)},new Uint8Array(await file.arrayBuffer()),c.get('meta'),c.req.header('idempotency-key'),config.uploadTimeoutMs-(performance.now()-c.get('startedAt')));return c.json({data:result.data,replayed:result.replayed,request_id:c.get('requestId')},result.status as ContentfulStatusCode);
+    });
+    app.delete(path,async c=>{const result=await media.mutate(actorRef(c),asset,await parseJson(()=>c.req.json()),null,c.get('meta'),c.req.header('idempotency-key'),remaining(c));return c.json({data:result.data,replayed:result.replayed,request_id:c.get('requestId')},result.status as ContentfulStatusCode);});
+  }
+  for(const [path,asset] of [['avatars','avatar'],['branding','branding']] as const){app.get('/api/v1/media/'+path+'/:id',async c=>{const resource=await media.read(asset,actorRef(c),c.req.param('id'),c.req.query());c.header('Content-Type',resource.contentType);c.header('Cache-Control',resource.cacheControl);return c.body(new Uint8Array(resource.bytes));});}
   for(const [path,queries] of [['audit-events',logQueries.audit],['security-events',logQueries.security],['email-tasks',logQueries.mail]] as const){
     app.get('/api/v1/'+path,async c=>c.json({data:await queries.list(actorRef(c),c.req.query()),request_id:c.get('requestId')}));
     app.get('/api/v1/'+path+'/:id',async c=>c.json({data:await queries.get(actorRef(c),c.req.param('id')),request_id:c.get('requestId')}));
@@ -243,7 +264,7 @@ export function startHttpServer(dependencies:AppDependencies,port=dependencies.c
   const app=createHttpApp(dependencies);
   const server=serve({fetch:app.fetch,port,hostname:'127.0.0.1'});
   if(!(server instanceof HttpServer))throw new Error('HTTP_SERVER_TYPE_UNSUPPORTED');
-  server.requestTimeout=dependencies.config.httpTimeoutMs;
+  server.requestTimeout=Math.max(dependencies.config.httpTimeoutMs,dependencies.config.uploadTimeoutMs);
   server.headersTimeout=Math.min(10_000,dependencies.config.httpTimeoutMs);
   return server;
 }

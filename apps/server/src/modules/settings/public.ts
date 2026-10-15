@@ -11,6 +11,6 @@ export async function loadPublicSettings(tx:Tx) {
   if(!row||!branding.success||!security.success)throw new AppError('DEPENDENCY_UNAVAILABLE');
   const b=branding.data;const initialized=row.initialization_status==='initialized';
   return {instance_name:b.instance_name,copyright:b.copyright,default_locale:b.default_locale,default_theme:b.default_theme,timezone:b.timezone,
-    logo_url:b.logo_file_id?`/api/v1/files/${b.logo_file_id}`:null,favicon_url:b.favicon_file_id?`/api/v1/files/${b.favicon_file_id}`:null,
+    logo_url:b.logo_file_id?`/api/v1/media/branding/${b.logo_file_id}`:null,favicon_url:b.favicon_file_id?`/api/v1/media/branding/${b.favicon_file_id}`:null,
     registration_open:initialized&&security.data.registration_open,password_min_length:security.data.password_min_length,initialized};
 }
