@@ -599,7 +599,7 @@ InviteDto 返回 email、邀请人{id,display_name}、角色快照、有效状�
 
 | 方法 / 路径 | 规则与数据 |
 | --- | --- |
-| GET `/settings` | settings:read；branding/security DTO + 各自 version，无部署密钥 |
+| GET `/settings` | settings:read；branding/security DTO + 各自 version、allowed_actions、requires_reauth_actions，无部署密钥 |
 | PATCH `/settings/branding` | settings:update-branding；I、V(branding)；整组普通字段；200 新组/version |
 | PATCH `/settings/security` | 真 super_admin + settings:update-security + R；I、V(security)、完整组和 confirmation；200 新组/version |
 | PUT/DELETE `/settings/branding/:asset` | asset=logo/favicon；settings:update-branding；I、V(branding)；上传 file；200 URL/version；无任意 URL 输入 |
@@ -731,6 +731,12 @@ worker 每分钟处理租约/凭证/请求到期，每小时回收无引用文�
 每请求权威读取安全组；普通展示组可由 Query 缓存，更新后主动失效。环境变量只在首次建设置行时提供缺省；重启不 UPSERT 覆盖用户配置。
 
 配置更新前读取当前版本、校验完整拟定组、近期验证及 confirmation；同事务写 version+1/审计/幂等。更新后前端刷新设置和 me；若会话期限已经缩短到当前 session 过期，下一请求 401。不能清空 created_at/last_seen_at 规避缩短。
+
+安全组以自然键 `security` 标识：`confirmation:{target_id:'security',typed_label:'security',reason}`，reason 1–500 码点；幂等重放的 resource_id 为 null，另带组更新 outcome/version。品牌普通 PATCH 只接收 instance_name/copyright/default_locale/default_theme/timezone，不接收文件 ID 或外部 URL，保留已有专用媒体引用。审计仅记录普通品牌变更的字段名与版本，不复制名称/版权自由文本；安全组记录受严格 schema 限制的布尔、数字及角色 ID 快照。
+
+安全设置提交时，对未撤销会话持久化收紧 absolute_expires_at 和 idle_expires_at，分别以原 created_at、last_seen_at 加新时限取更早值。同一会话即使在策略收紧与再次放宽之间从未请求，也不能因此恢复原来的更晚期限；正常活跃请求仍按现有空闲续期规则处理。
+
+设置页按当前 allowed_actions 显示各组编辑入口；只读用户只看安全值。冲突读取完整当前组供比较，明确采用当前版本后仍保留原草稿，保存会替换完整组。响应不明冻结原正文与幂等键，若重试要求近期验证，验证通过后仍以原键明确重试；已确认写入而后续刷新失败时只重试读取。
 
 ## 12. 前端详细设计
 

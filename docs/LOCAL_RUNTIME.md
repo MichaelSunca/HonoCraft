@@ -215,3 +215,14 @@ query 去除首尾空格后为空或 2–100 码点，`%`、`_` 按字面搜索�
 | POST `/me/sessions/revoke-others` | 空 JSON；Idempotency-Key | revoked_count |
 
 所有写入均校验 Origin 和当前会话 CSRF。幂等键为 UUID：首次完成返回对应 DTO，合法重放返回最小 operation summary 并标记 `replayed:true`，前端刷新列表获取最新状态。响应不确定时保留同一正文和幂等键，不自动换键重试；编辑正文后使用新键。密码提交的凭证仅留在当前表单内存，离开页面即丢弃。改密成功本身使旧会话失效，响应丢失后也不能用旧 Cookie 重新取得身份，需重新登录。
+
+## 系统设置接口与页面
+
+`/settings` 导航和直接访问要求 settings:read。GET `/api/v1/settings` 返回 branding/security 两组值、各自 version、allowed_actions 和 requires_reauth_actions，不返回部署密钥。普通管理员可读取安全策略，不能提交保留操作。
+
+- PATCH `/api/v1/settings/branding` 要求 settings:update-branding、Origin/CSRF、UUID Idempotency-Key；正文完整包含 instance_name、copyright、default_locale、default_theme、timezone 和 expected_version。文件 ID 与任意 URL 不在普通更新接口内；品牌图片待专用媒体接口交付。
+- PATCH `/api/v1/settings/security` 要求真正的内建超级管理员、settings:update-security、当前设备五分钟近期验证、Origin/CSRF 和 UUID Idempotency-Key。提交完整安全组和 expected_version；confirmation 固定 target_id/typed_label 为 security，另附 1–500 码点 reason。字段范围见详细设计 §11.1。
+
+默认注册角色仅接受仍具注册资格、仅含可自行赋予权限且依赖完整的角色；只影响未来注册，已有 Pending 的角色引用不变。安全设置与审计、安全事件、幂等摘要和已签发会话期限收紧在同一事务完成；任一失败全部回滚。缩短后立刻放宽也不能恢复原先的更晚会话期限，即使期间没有该会话的请求。更新成功但当前会话因新期限过期时，后续读取会清除本地账号状态并转到登录页。
+
+页面分别编辑两组，采用服务端当前版本，不做乐观成功更新；安全组提供合格角色分页搜索、原因与输入确认。重新验证后须再次明确保存；网络结果不明时冻结正文和原幂等键，验证窗口过期也继续保留原操作。冲突展示完整当前组供比较，采用版本时保留草稿；保存会覆盖整组。写入已确认而刷新失败时，只提供重新读取，不重复提交。品牌保存后刷新 me、设置及公共设置缓存，使实例标题、页脚和默认偏好生效。

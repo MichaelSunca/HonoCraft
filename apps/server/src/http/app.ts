@@ -224,7 +224,7 @@ export function createHttpApp({pool,config,passwords,secrets,webRoot}:AppDepende
   });
   if(webRoot){
     app.get('/assets/*',serveStatic({root:webRoot}));
-    for(const route of ['/','/login','/register','/bootstrap','/verify-email','/forgot-password','/reset-password','/accept-invite','/change-email','/profile','/security','/sessions','/invites','/users','/users/:id','/roles','/roles/:id','/permissions','/403','/404','/unavailable']){
+    for(const route of ['/','/login','/register','/bootstrap','/verify-email','/forgot-password','/reset-password','/accept-invite','/change-email','/profile','/security','/sessions','/invites','/users','/users/:id','/roles','/roles/:id','/permissions','/settings','/403','/404','/unavailable']){
       app.get(route,serveStatic({root:webRoot,path:'index.html'}));
     }
   }
