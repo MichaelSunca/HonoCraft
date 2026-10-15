@@ -2,6 +2,7 @@ import i18n from 'i18next';
 import {initReactI18next} from 'react-i18next';
 import {permissionEnglish,permissionChinese} from './permission-messages.js';
 export const en={
+  emailChange:'Confirm new email',emailChangeIntro:'Confirm the new email address using this link. Your current address remains in use until you confirm. Then sign in again with the new address.',emailChanged:'Email changed. Sign in with your new email address.',emailChangeInvalid:'This email change request is no longer available. Review the current request in account security.',
   roleCodeHelp:'Use 3–64 lowercase letters, digits, hyphens or underscores, starting with a letter. The code cannot be changed later.',roleNameHelp:'Enter a role name containing 1–80 characters.',roleDescriptionHelp:'Use no more than 500 characters.',roleReasonHelp:'Enter a reason containing 1–500 characters.',
   roleManagement:'Role management',rolesIntro:'Define access through roles, then review their qualifications and references.',permissionCatalog:'Permission catalog',permissionsIntro:'Read the permissions available in this instance, their restrictions and required dependencies.',
   roleCode:'Role code',roleName:'Role name',roleDescription:'Description',roleType:'Role type',allRoles:'All roles',builtInRole:'Built-in',customRole:'Custom',createRole:'Create role',editRole:'Edit role',copyRole:'Copy role',deleteRole:'Delete role',roleQualifications:'Qualifications',setQualifications:'Set qualifications',roleDelegable:'Delegable',roleRegistrationEligible:'Eligible for registration',yes:'Yes',no:'No',backRoles:'Back to roles',noRoles:'No roles match these filters.',rolePageCount:'Page {{page}} · {{total}} roles',roleVersion:'Version {{version}}',roleSaved:'Role updated.',
@@ -54,6 +55,7 @@ export const en={
 };
 export type MessageKey=keyof typeof en;
 const zh:Record<MessageKey,string>={
+  emailChange:'确认新邮箱',emailChangeIntro:'通过此链接确认新邮箱。确认前继续使用原邮箱，确认后请使用新邮箱重新登录。',emailChanged:'邮箱已变更，请使用新邮箱重新登录。',emailChangeInvalid:'此邮箱变更请求已失效，请在账号安全中查看当前请求。',
   roleCodeHelp:'使用 3–64 位小写字母、数字、连字符或下划线，以字母开头。创建后不能修改。',roleNameHelp:'请输入 1–80 个字符的角色名称。',roleDescriptionHelp:'描述不能超过 500 个字符。',roleReasonHelp:'请输入 1–500 个字符的原因。',
   roleManagement:'角色管理',rolesIntro:'通过角色定义访问权限，并核对角色资格与引用。',permissionCatalog:'权限目录',permissionsIntro:'查看本实例可用权限、使用限制及所需前置权限。',
   roleCode:'角色 Code',roleName:'角色名称',roleDescription:'描述',roleType:'角色类型',allRoles:'全部角色',builtInRole:'内建',customRole:'自定义',createRole:'创建角色',editRole:'编辑角色',copyRole:'复制角色',deleteRole:'删除角色',roleQualifications:'角色资格',setQualifications:'设置资格',roleDelegable:'可委派',roleRegistrationEligible:'可用于注册',yes:'是',no:'否',backRoles:'返回角色列表',noRoles:'没有符合条件的角色。',rolePageCount:'第 {{page}} 页 · 共 {{total}} 个角色',roleVersion:'版本 {{version}}',roleSaved:'角色已更新。',

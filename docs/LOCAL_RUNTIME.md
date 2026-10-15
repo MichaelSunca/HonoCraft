@@ -143,7 +143,7 @@ query 去除首尾空格后为空或 2–100 码点，`%`、`_` 按字面搜索�
 
 ## 用户管理接口
 
-用户管理已提供下列 API；管理页面、管理员发送密码重置和邮箱变更接口仍待实现。
+用户管理已提供下列 API；管理页面仍待实现。密码重置邮件和邮箱变更接口见下一节。
 
 | API（相对 `/api/v1`） | 输入 | 结果 |
 | --- | --- | --- |
@@ -162,9 +162,28 @@ query 去除首尾空格后为空或 2–100 码点，`%`、`_` 按字面搜索�
 
 审计、安全事件、用户版本、撤销与通知入队在同一事务完成。版本冲突不覆盖新值；同键重放只返回最小结果摘要，重新检查当前权限、目标范围及历史角色范围/高风险要求，不重复撤销或发信。
 
+## 密码重置邮件与邮箱变更
+
+| API（相对 `/api/v1`） | 输入与权限 | 结果 |
+| --- | --- | --- |
+| POST `/users/:id/password-reset` | user:reset-password；expected_version、confirmation；高风险目标需近期验证和规范邮箱确认 | 202 `{accepted:true}` |
+| POST `/me/email-change` | 本人近期验证；expected_version、new_email | 202 request_id、request_version、user_version、expires_at |
+| DELETE `/me/email-change` | 本人；expected_version、request_id、request_version | cancelled、user_version |
+| POST `/users/:id/email-change` | user:update-email、完整目标范围、近期验证；expected_version、new_email、confirmation | 与本人发起相同 |
+| DELETE `/users/:id/email-change` | user:update-email、原发起者、当前目标范围；expected_version、request_id、request_version；高风险时 confirmation | cancelled、user_version |
+| POST `/auth/email-change/confirm` | 无会话；token；同源 Origin | changed、login_required；清 Cookie |
+
+受保护写入均要求 CSRF 和 UUID Idempotency-Key。管理员重置只向目标邮箱发送验证链接，签发时不改密码、用户版本或当前会话；用户完成重置时才修改密码并撤销会话。邮件发送与匿名找回共享来源配额及同地址/用途冷却；限流不会替换旧链接，同键重试不重复发信。失败审计导致签发和配额同事务回滚。
+
+邮箱变更在验证前保留原登录邮箱，新邮箱不预占；完成时再次检查全局唯一性。发起和取消递增用户编辑版本，替换/取消撤销旧链接和任务；管理员修正 Pending 邮箱不会直接激活，先撤销原邮箱验证凭证，新地址验证后再按原注册角色规则激活。取消只允许本人或当前仍具资格的原发起者。旧请求到期后可重新发起；待变更新邮箱从不作为登录地址。
+
+确认再次检查最新请求、用途、版本、epoch、期限、目标状态及管理员发起者当前资格。成功后原子替换邮箱、标记验证、增加编辑/授权版本、撤销所有会话及其他未消费凭证，记录审计/安全事件并向原邮箱发送完成通知；密码保持原值。两个用户申请同一地址时，以实际完成的唯一约束为准，冲突保留原邮箱及未消费请求。新旧邮箱只以脱敏摘要进入审计，凭证和邮件载荷仅保存在加密 outbox。
+
+`/change-email#token=…` 立即清除 fragment，仅在当前页面内存保留凭证。页面不会自动确认；用户明确提交后进入登录页，并向其他标签页广播会话失效。刷新或离开需重新打开原邮件。目前本人邮箱变更发起/取消界面与后台用户操作界面仍待接入。
+
 ## 浏览器页面与测试
 
-当前可用 `/login`、`/register`、`/bootstrap`、`/verify-email`、`/forgot-password`、`/reset-password`、`/accept-invite`、`/`、`/profile`、`/security`、`/sessions`、`/invites`、`/roles`、`/roles/:id` 和 `/permissions`，支持中文/英文、浅色/深色/系统外观。注册入口遵守公开设置；邀请管理支持分页筛选、详情、自定义角色选择、创建/重发/撤销/再次邀请、版本冲突核对及高权限近期验证；角色及权限页面见对应章节，其余管理页面和邮箱变更仍待实现。
+当前可用 `/login`、`/register`、`/bootstrap`、`/verify-email`、`/forgot-password`、`/reset-password`、`/accept-invite`、`/change-email`、`/`、`/profile`、`/security`、`/sessions`、`/invites`、`/roles`、`/roles/:id` 和 `/permissions`，支持中文/英文、浅色/深色/系统外观。注册入口遵守公开设置；邀请管理支持分页筛选、详情、自定义角色选择、创建/重发/撤销/再次邀请、版本冲突核对及高权限近期验证；角色及权限页面见对应章节，其余管理页面及本人邮箱变更操作界面仍待实现。
 
 邮件凭证从 fragment 进入当前页面内存后立即清除地址栏；打开页面不消费凭证，必须主动提交。刷新或离开页面后需重新打开原始邮件。账号切换、退出、密码重置和受保护请求 401 清除保护缓存及草稿，标签页通过不含凭证的 BroadcastChannel 信号同步失效。退出网络失败会保留“尚未确认”提示并提供重试，不声称服务器会话已撤销。
 

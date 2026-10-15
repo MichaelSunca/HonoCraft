@@ -6,17 +6,18 @@ import {useQuery,useQueryClient} from '@tanstack/react-query';
 import {z} from 'zod';
 import {CompleteInvitationSchema,EmailRequestSchema,LoginSchema,RegisterSchema,ResetPasswordSchema,TokenRequestSchema} from '@honocraft/contracts/common';
 import {InvitationPreviewSchema,MeSchema,PublicSettingsSchema} from '@honocraft/contracts/http';
+import {EmailChangeConfirmedSchema} from '@honocraft/contracts/email-change';
 import {accepted,api,ApiError,errorMessage} from './api.js';
 import {discardCredential,pageCredential} from './credential.js';
 import {useSession} from './session.js';
 import {PreferenceControls,usePreferences} from './preferences.js';
 import type {MessageKey} from './i18n.js';
-type Mode='login'|'register'|'bootstrap'|'verify'|'forgot'|'reset'|'invite';
+type Mode='login'|'register'|'bootstrap'|'verify'|'forgot'|'reset'|'invite'|'emailChange';
 type Fields={email:string;display_name:string;password:string;confirm:string};
-const intro:Record<Mode,MessageKey>={login:'loginIntro',register:'registerIntro',bootstrap:'bootstrapIntro',verify:'verifyIntro',forgot:'forgotIntro',reset:'resetIntro',invite:'inviteIntro'};
-const submitLabel:Record<Mode,MessageKey>={login:'login',register:'register',bootstrap:'createAdmin',verify:'verify',forgot:'sendReset',reset:'reset',invite:'invite'};
-const paths:Record<Mode,string>={login:'/auth/login',register:'/auth/register',bootstrap:'/auth/bootstrap/complete',verify:'/auth/email/verify',forgot:'/auth/password/forgot',reset:'/auth/password/reset',invite:'/auth/invites/accept'};
-const responseSchemas={login:z.object({authenticated:z.literal(true)}),register:accepted,bootstrap:z.object({initialized:z.literal(true),login_required:z.literal(true)}),verify:z.object({verified:z.literal(true),login_required:z.literal(true)}),forgot:accepted,reset:z.object({reset:z.literal(true),login_required:z.literal(true)}),invite:z.object({accepted:z.literal(true),login_required:z.literal(true)})};
+const intro:Record<Mode,MessageKey>={login:'loginIntro',register:'registerIntro',bootstrap:'bootstrapIntro',verify:'verifyIntro',forgot:'forgotIntro',reset:'resetIntro',invite:'inviteIntro',emailChange:'emailChangeIntro'};
+const submitLabel:Record<Mode,MessageKey>={login:'login',register:'register',bootstrap:'createAdmin',verify:'verify',forgot:'sendReset',reset:'reset',invite:'invite',emailChange:'emailChange'};
+const paths:Record<Mode,string>={login:'/auth/login',register:'/auth/register',bootstrap:'/auth/bootstrap/complete',verify:'/auth/email/verify',forgot:'/auth/password/forgot',reset:'/auth/password/reset',invite:'/auth/invites/accept',emailChange:'/auth/email-change/confirm'};
+const responseSchemas={login:z.object({authenticated:z.literal(true)}),register:accepted,bootstrap:z.object({initialized:z.literal(true),login_required:z.literal(true)}),verify:z.object({verified:z.literal(true),login_required:z.literal(true)}),forgot:accepted,reset:z.object({reset:z.literal(true),login_required:z.literal(true)}),invite:z.object({accepted:z.literal(true),login_required:z.literal(true)}),emailChange:EmailChangeConfirmedSchema};
 export function AuthPage({mode}:{mode:Mode}){
   const {t}=useTranslation(),location=useLocation(),navigate=useNavigate(),session=useSession(),preferences=usePreferences(),queryClient=useQueryClient();
   const [token]=useState(()=>pageCredential(location.pathname));
@@ -33,13 +34,13 @@ export function AuthPage({mode}:{mode:Mode}){
     return()=>controller.abort();
   },[mode,token,previewAttempt]);
   useEffect(()=>{if(settings.data){preferences.defaults(settings.data);document.title=settings.data.instance_name;}},[settings.data]);
-  const credential=['bootstrap','verify','reset','invite'].includes(mode),hasPassword=['login','register','bootstrap','reset','invite'].includes(mode);
+  const credential=['bootstrap','verify','reset','invite','emailChange'].includes(mode),hasPassword=['login','register','bootstrap','reset','invite'].includes(mode);
   const hasEmail=['login','register','forgot'].includes(mode),hasName=['register','bootstrap','invite'].includes(mode),confirmation=hasPassword&&mode!=='login';
   async function submit(fields:Fields){
     setError(null);setMessage(null);setPending(false);
     if(confirmation&&fields.password!==fields.confirm){form.setError('confirm',{message:'mismatch'});return;}
     if(confirmation&&[...fields.password].length<(settings.data?.password_min_length??15)){form.setError('password',{message:'passwordRejected'});return;}
-    const input=mode==='login'?LoginSchema.safeParse({email:fields.email,password:fields.password}):mode==='register'?RegisterSchema.safeParse({email:fields.email,password:fields.password,display_name:fields.display_name}):mode==='bootstrap'||mode==='invite'?CompleteInvitationSchema.safeParse({token,password:fields.password,display_name:fields.display_name}):mode==='verify'?TokenRequestSchema.safeParse({token}):mode==='forgot'?EmailRequestSchema.safeParse({email:fields.email}):ResetPasswordSchema.safeParse({token,new_password:fields.password});
+    const input=mode==='login'?LoginSchema.safeParse({email:fields.email,password:fields.password}):mode==='register'?RegisterSchema.safeParse({email:fields.email,password:fields.password,display_name:fields.display_name}):mode==='bootstrap'||mode==='invite'?CompleteInvitationSchema.safeParse({token,password:fields.password,display_name:fields.display_name}):mode==='verify'||mode==='emailChange'?TokenRequestSchema.safeParse({token}):mode==='forgot'?EmailRequestSchema.safeParse({email:fields.email}):ResetPasswordSchema.safeParse({token,new_password:fields.password});
     if(!input.success){for(const issue of input.error.issues){const name=issue.path[0];if(name==='email'||name==='display_name'||name==='password')form.setError(name,{message:'invalid'});else if(name==='new_password')form.setError('password',{message:'invalid'});}setError(new ApiError('VALIDATION_ERROR'));return;}
     try{
       await api(paths[mode],responseSchemas[mode] as z.ZodType<unknown>,{body:input.data});
@@ -47,6 +48,7 @@ export function AuthPage({mode}:{mode:Mode}){
       if(mode==='register'||mode==='forgot'){setMessage('inbox');return;}
       discardCredential();
       if(mode==='reset'){session.end('resetDone');return;}
+      if(mode==='emailChange'){session.end('emailChanged');return;}
       if(mode==='bootstrap')queryClient.removeQueries({queryKey:['public','settings'],exact:true});
       session.announce(mode==='bootstrap'?'initialized':mode==='invite'?'invitationAccepted':'verified');navigate('/login',{replace:true});
     }catch(cause){setError(cause);if(cause instanceof ApiError&&cause.code==='EMAIL_VERIFICATION_REQUIRED')setPending(true);}

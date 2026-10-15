@@ -24,7 +24,7 @@ export async function api<T>(path:string,schema:z.ZodType<T>,options:{body?:unkn
 const errors:Record<string,MessageKey>={AUTH_FAILED:'authFailed',SESSION_INVALID:'sessionEnded',CREDENTIAL_INVALID:'credentialInvalid',RATE_LIMITED:'rateLimited',PASSWORD_REJECTED:'passwordRejected',
   ROLE_CODE_CONFLICT:'roleCodeConflict',ROLE_IN_USE:'roleInUse',REGISTRATION_ROLE_IN_USE:'registrationRoleInUse',REGISTRATION_ROLE_INVALID:'registrationRoleInvalid',PERMISSION_DEPENDENCY_MISSING:'permissionDependencyError',NOT_FOUND:'notFound',
   REAUTH_REQUIRED:'reauthRequired',ACCOUNT_EXISTS:'accountExists',INVITE_EXISTS:'inviteExists',INVITE_TERMINAL:'inviteNotPending',
-  INVITE_REISSUE_REQUIRED:'invitationReissue',EMAIL_CONFLICT:'emailConflict',
+  INVITE_REISSUE_REQUIRED:'invitationReissue',EMAIL_CONFLICT:'emailConflict',CHANGE_REQUEST_INVALID:'emailChangeInvalid',
   EMAIL_VERIFICATION_REQUIRED:'pending',REGISTRATION_DISABLED:'registrationClosed',SYSTEM_NOT_INITIALIZED:'uninitialized',BOOTSTRAP_CLOSED:'bootstrapClosed',VERSION_CONFLICT:'conflict',
   VALIDATION_ERROR:'invalid',FORBIDDEN:'forbidden',ORIGIN_INVALID:'forbidden',CSRF_INVALID:'csrfInvalid',AUTH_BUSY:'busy',BUSY_RETRY:'busy',DEPENDENCY_UNAVAILABLE:'unavailableIntro',NETWORK:'network'};
 export function errorMessage(error:unknown):MessageKey{return error instanceof ApiError?errors[error.code]??'internal':'network';}

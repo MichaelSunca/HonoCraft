@@ -1,0 +1,10 @@
+import {z} from 'zod';
+import {EmailSchema,VersionSchema,text} from './common.js';
+const confirmation=z.strictObject({target_id:z.uuid(),typed_label:text(1,254).optional(),reason:text(1,500).refine(value=>value.trim().length>0)});
+export const SelfEmailChangeSchema=z.strictObject({expected_version:VersionSchema,new_email:EmailSchema});
+export const AdminEmailChangeSchema=SelfEmailChangeSchema.extend({id:z.uuid(),confirmation});
+export const SelfEmailCancelSchema=z.strictObject({expected_version:VersionSchema,request_id:z.uuid(),request_version:VersionSchema});
+export const AdminEmailCancelSchema=SelfEmailCancelSchema.extend({id:z.uuid(),confirmation:confirmation.optional()});
+export const EmailChangeStartedSchema=z.strictObject({request_id:z.uuid(),request_version:VersionSchema,user_version:VersionSchema,expires_at:z.iso.datetime()});
+export const EmailChangeCancelledSchema=z.strictObject({cancelled:z.literal(true),user_version:VersionSchema});
+export const EmailChangeConfirmedSchema=z.strictObject({changed:z.literal(true),login_required:z.literal(true)});

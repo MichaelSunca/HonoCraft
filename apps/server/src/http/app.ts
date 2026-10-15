@@ -26,6 +26,7 @@ import { profileMutation } from '../modules/users/profile.js';
 import { getMe } from '../modules/users/me.js';
 import {createUserQueries} from '../modules/users/queries.js';
 import {createUserManagement} from '../modules/users/management.js';
+import {createEmailChange} from '../modules/users/email-change.js';
 import { createClientIpResolver } from './security.js';
 import {createSessionManagement} from '../modules/auth/session-management.js';
 import {createAccountSecurity} from '../modules/auth/account-security.js';
@@ -48,6 +49,7 @@ export function createHttpApp({pool,config,passwords,secrets,webRoot}:AppDepende
   const roleQueries=createRoleQueries(pool,secrets.epoch);
   const userQueries=createUserQueries(pool,secrets.epoch);
   const userManagement=createUserManagement(pool,secrets);
+  const emailChange=createEmailChange(pool,secrets);
   const roleManagement=createRoleManagement(pool,secrets);
   const permissionQueries=createPermissionQueries(pool,secrets.epoch);
   const login=createLoginService(pool,{epoch:secrets.epoch,digestKey:secrets.digestKey.key},passwords);
@@ -108,11 +110,12 @@ export function createHttpApp({pool,config,passwords,secrets,webRoot}:AppDepende
   for(const [path,action,status] of [
     ['/register',publicAuth.register,202],['/email/resend',publicAuth.resend,202],['/email/verify',publicAuth.verify,200],
     ['/password/forgot',publicAuth.forgot,202],['/password/reset',publicAuth.reset,200],
+    ['/email-change/confirm',emailChange.confirm,200],
     ['/invites/preview',invitations.preview,200],['/invites/accept',invitations.accept,200],
   ] as const){
     app.post(`/api/v1/auth${path}`,async c=>{
       const data=await action(await parseJson(()=>c.req.json()),c.get('meta'),config.httpTimeoutMs-(performance.now()-c.get('startedAt')));
-      if(path==='/password/reset')deleteCookie(c,config.sessionCookieName,cookieOptions);
+      if(path==='/password/reset'||path==='/email-change/confirm')deleteCookie(c,config.sessionCookieName,cookieOptions);
       return c.json({data,request_id:c.get('requestId')},status);
     });
   }
@@ -126,7 +129,20 @@ export function createHttpApp({pool,config,passwords,secrets,webRoot}:AppDepende
   app.get('/api/v1/permissions',async c=>c.json({data:await permissionQueries.list(actorRef(c),c.req.query()),request_id:c.get('requestId')}));
   app.get('/api/v1/users',async c=>c.json({data:await userQueries.list(actorRef(c),c.req.query()),request_id:c.get('requestId')}));
   app.get('/api/v1/users/:id',async c=>c.json({data:await userQueries.get(actorRef(c),c.req.param('id')),request_id:c.get('requestId')}));
-  for(const [method,suffix,action] of [['PATCH','/profile',userManagement.profile],['POST','/status',userManagement.status],['DELETE','',userManagement.delete],['PUT','/roles',userManagement.roles]] as const){
+  for(const [method,action] of [['POST',emailChange.startSelf],['DELETE',emailChange.cancelSelf]] as const){
+    app.on(method,'/api/v1/me/email-change',async c=>{
+      const result=await action(actorRef(c),await parseJson(()=>c.req.json()),c.get('meta'),c.req.header('idempotency-key'),remaining(c));
+      return c.json({data:result.data,replayed:result.replayed,request_id:c.get('requestId')},result.status as ContentfulStatusCode);
+    });
+  }
+  for(const [method,action] of [['POST',emailChange.startAdmin],['DELETE',emailChange.cancelAdmin]] as const){
+    app.on(method,'/api/v1/users/:id/email-change',async c=>{
+      const body=z.record(z.string(),z.unknown()).safeParse(await parseJson(()=>c.req.json()));if(!body.success||Object.hasOwn(body.data,'id'))throw new AppError('VALIDATION_ERROR');
+      const result=await action(actorRef(c),{...body.data,id:c.req.param('id')},c.get('meta'),c.req.header('idempotency-key'),remaining(c));
+      return c.json({data:result.data,replayed:result.replayed,request_id:c.get('requestId')},result.status as ContentfulStatusCode);
+    });
+  }
+  for(const [method,suffix,action] of [['PATCH','/profile',userManagement.profile],['POST','/status',userManagement.status],['DELETE','',userManagement.delete],['PUT','/roles',userManagement.roles],['POST','/password-reset',userManagement.reset]] as const){
     app.on(method,'/api/v1/users/:id'+suffix,async c=>{
       const body=z.record(z.string(),z.unknown()).safeParse(await parseJson(()=>c.req.json()));
       if(!body.success||Object.hasOwn(body.data,'id'))throw new AppError('VALIDATION_ERROR');
@@ -202,7 +218,7 @@ export function createHttpApp({pool,config,passwords,secrets,webRoot}:AppDepende
   });
   if(webRoot){
     app.get('/assets/*',serveStatic({root:webRoot}));
-    for(const route of ['/','/login','/register','/bootstrap','/verify-email','/forgot-password','/reset-password','/accept-invite','/profile','/security','/sessions','/invites','/roles','/roles/:id','/permissions','/403','/404','/unavailable']){
+    for(const route of ['/','/login','/register','/bootstrap','/verify-email','/forgot-password','/reset-password','/accept-invite','/change-email','/profile','/security','/sessions','/invites','/roles','/roles/:id','/permissions','/403','/404','/unavailable']){
       app.get(route,serveStatic({root:webRoot,path:'index.html'}));
     }
   }

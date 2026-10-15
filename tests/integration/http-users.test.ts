@@ -8,9 +8,9 @@ import {migrate} from '../../apps/server/src/infrastructure/migrations.js';
 import {createPasswordService} from '../../apps/server/src/infrastructure/passwords.js';
 import {loadConfig} from '../../apps/server/src/infrastructure/config.js';
 import {startHttpServer} from '../../apps/server/src/http/app.js';
-import {csrfForSession,issueToken} from '../../apps/server/src/infrastructure/crypto.js';
+import {csrfForSession,issueToken,decryptPayload} from '../../apps/server/src/infrastructure/crypto.js';
 import {withTransaction} from '../../apps/server/src/infrastructure/db.js';
-import {enqueueMail} from '../../apps/server/src/modules/mail/outbox.js';
+import {enqueueMail,mailAad} from '../../apps/server/src/modules/mail/outbox.js';
 import {invitation} from '../helpers/invitation.js';
 let database:Awaited<ReturnType<typeof startTestPostgres>>,web:pg.Pool,server:ReturnType<typeof startHttpServer>,base:string;
 beforeAll(async()=>{
@@ -240,4 +240,47 @@ it('allows ordinary profile correction alongside other shared security transacti
     const response=await write('/users/'+target.userId+'/profile','PATCH',actor,{expected_version:1,display_name:'Concurrent correction'});
     expect(response.status).toBe(200);
   }finally{await connection.query('ROLLBACK');connection.release();}
+});
+it('issues an administrator password reset once without changing the password, versions or current sessions',async()=>{
+  const actor=await identity(database.pool,'admin'),target=await identity(database.pool),path='/users/'+target.userId+'/password-reset',body={expected_version:1,confirmation:confirmation(target.userId)},key=randomUUID();
+  const response=await write(path,'POST',actor,body,key);expect(response.status).toBe(202);expect((await response.json()).data).toEqual({accepted:true});
+  const replay=await write(path,'POST',actor,body,key);expect(replay.status).toBe(202);expect((await replay.json())).toMatchObject({replayed:true,data:{outcome:'user_password_reset_requested',resource_id:target.userId,version:1}});
+  expect((await database.pool.query('SELECT version,authorization_version,password_hash FROM users WHERE id=$1',[target.userId])).rows[0]).toEqual({version:1,authorization_version:1,password_hash:'test-hash-not-for-login'});expect((await get('/me',target)).status).toBe(200);
+  const tasks=await database.pool.query("SELECT t.* FROM email_tasks t JOIN one_time_credentials c ON c.id=t.credential_id WHERE c.user_id=$1 AND c.purpose='password_reset'",[target.userId]);expect(tasks.rowCount).toBe(1);
+  const task=tasks.rows[0],payload=JSON.parse(decryptPayload({activeKeyId:'v1',keys:new Map([['v1',Buffer.alloc(32,4)]])},{keyId:task.key_id,ciphertext:task.payload_ciphertext,nonce:task.nonce,tag:task.auth_tag},mailAad(task.id,task.purpose,task.template_version)));
+  expect(payload).toMatchObject({purpose:'password_reset',recipient:target.userId+'@example.test'});
+  const reset=await fetch(base+'/api/v1/auth/password/reset',{method:'POST',headers:{origin:'https://users.example.test','content-type':'application/json'},body:JSON.stringify({token:payload.token,new_password:'A sufficiently long new password'})});expect(reset.status).toBe(200);expect((await get('/me',target)).status).toBe(401);
+});
+it('shares reset mail cooldown with anonymous recovery and does not replace a credential on throttling',async()=>{
+  const actor=await identity(database.pool,'admin'),target=await identity(database.pool),path='/users/'+target.userId+'/password-reset',body={expected_version:1,confirmation:confirmation(target.userId)};
+  expect((await write(path,'POST',actor,body)).status).toBe(202);
+  const original=(await database.pool.query("SELECT id FROM one_time_credentials WHERE user_id=$1 AND purpose='password_reset'",[target.userId])).rows[0].id;
+  const throttled=await write(path,'POST',actor,body);expect(throttled.status).toBe(429);expect(Number(throttled.headers.get('retry-after'))).toBeGreaterThan(0);
+  const anonymous=await fetch(base+'/api/v1/auth/password/forgot',{method:'POST',headers:{origin:'https://users.example.test','content-type':'application/json'},body:JSON.stringify({email:target.userId+'@example.test'})});expect(anonymous.status).toBe(202);
+  expect((await database.pool.query('SELECT id,revoked_at FROM one_time_credentials WHERE user_id=$1',[target.userId])).rows).toEqual([{id:original,revoked_at:null}]);
+  await database.pool.query("UPDATE rate_limit_buckets SET last_accepted_at=clock_timestamp()-interval '2 minutes' WHERE scope='mail.target.password_reset'");
+  expect((await write(path,'POST',actor,body)).status).toBe(202);
+  expect((await database.pool.query('SELECT revoked_at FROM one_time_credentials WHERE id=$1',[original])).rows[0].revoked_at).not.toBeNull();
+  expect((await database.pool.query('SELECT status,payload_ciphertext FROM email_tasks WHERE credential_id=$1',[original])).rows[0]).toEqual({status:'cancelled',payload_ciphertext:null});
+});
+it('rejects reset requests outside current authority, version or active-account eligibility',async()=>{
+  const actor=await identity(database.pool,'admin'),target=await identity(database.pool),high=await identity(database.pool,'super_admin'),member=await identity(database.pool),path='/users/'+target.userId+'/password-reset',body={expected_version:1,confirmation:confirmation(target.userId)};
+  expect((await write(path,'POST',member,body)).status).toBe(403);
+  expect((await write('/users/'+high.userId+'/password-reset','POST',actor,{expected_version:1,confirmation:confirmation(high.userId)})).status).toBe(403);
+  expect((await write(path,'POST',actor,{...body,expected_version:2})).status).toBe(409);
+  expect((await write(path,'POST',actor,{...body,new_password:'Do not accept direct passwords'})).status).toBe(422);
+  for(const state of ['pending','suspended','deleted']){
+    await database.pool.query("UPDATE users SET status=$2,deleted_at=CASE WHEN $2='deleted' THEN clock_timestamp() ELSE NULL END WHERE id=$1",[target.userId,state]);
+    expect((await write(path,'POST',actor,body)).status).toBe(422);
+  }
+  expect((await database.pool.query('SELECT 1 FROM email_tasks')).rowCount).toBe(0);
+});
+it('requires privileged reset confirmation and rolls back reset issuance when audit fails',async()=>{
+  const actor=await identity(database.pool,'super_admin'),target=await identity(database.pool,'admin'),path='/users/'+target.userId+'/password-reset',body={expected_version:1,confirmation:confirmation(target.userId,target.userId+'@example.test')};
+  const denied=await write(path,'POST',actor,body);expect(denied.status).toBe(403);expect((await denied.json()).error.code).toBe('REAUTH_REQUIRED');await verify(actor);
+  expect((await write(path,'POST',actor,{...body,confirmation:confirmation(target.userId,'wrong@example.test')})).status).toBe(422);
+  await database.pool.query("CREATE FUNCTION fail_reset_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='users.password.reset_requested' AND NEW.result='success' THEN RAISE EXCEPTION 'audit unavailable'; END IF; RETURN NEW; END $$; CREATE TRIGGER fail_reset_audit BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION fail_reset_audit()");
+  expect((await write(path,'POST',actor,body)).status).toBe(500);
+  for(const table of ['email_tasks','one_time_credentials','rate_limit_buckets','idempotency_records'])expect((await database.pool.query('SELECT 1 FROM '+table)).rowCount).toBe(0);
+  expect((await get('/me',target)).status).toBe(200);
 });

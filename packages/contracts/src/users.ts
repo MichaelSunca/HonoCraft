@@ -25,6 +25,8 @@ const mutation={id:z.uuid(),expected_version:VersionSchema};
 export const UserProfileUpdateSchema=z.strictObject({...mutation,display_name:DisplayNameSchema,confirmation:confirmation.optional()});
 export const UserStatusUpdateSchema=z.strictObject({...mutation,action:z.enum(['suspend','enable']),confirmation});
 export const UserDeleteSchema=z.strictObject({...mutation,confirmation});
+export const UserPasswordResetSchema=z.strictObject({...mutation,confirmation});
+export const UserPasswordResetResultSchema=z.strictObject({accepted:z.literal(true)});
 export const UserRolesUpdateSchema=z.strictObject({...mutation,role_ids:z.array(z.uuid()).max(200).transform(ids=>[...new Set(ids)].sort()).pipe(z.array(z.uuid()).max(100)),confirmation});
 export const UserProfileResultSchema=z.strictObject({id:z.uuid(),display_name:DisplayNameSchema,version:VersionSchema});
 export const UserStatusResultSchema=z.strictObject({id:z.uuid(),status:UserStatusSchema,version:VersionSchema});
