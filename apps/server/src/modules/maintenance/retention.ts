@@ -11,6 +11,8 @@ const tables=['audit_events','security_events','sessions','one_time_credentials'
 async function maintenanceRole(tx:Tx){
   const valid=(await tx.query<{valid:boolean}>(`SELECT
     (SELECT bool_and(has_table_privilege(current_user,t,'SELECT') AND has_table_privilege(current_user,t,'DELETE')) FROM unnest($1::text[]) t)
+    AND has_table_privilege(current_user,'public.audit_events','INSERT')
+    AND has_function_privilege(current_user,'public.lock_retention_candidates(text,integer,integer)','EXECUTE')
     AND has_column_privilege(current_user,'public.email_tasks','credential_id','UPDATE')
     AND has_column_privilege(current_user,'public.invites','id','SELECT') AND has_column_privilege(current_user,'public.invites','status','SELECT')
     AND has_column_privilege(current_user,'public.email_change_requests','id','SELECT') AND has_column_privilege(current_user,'public.email_change_requests','status','SELECT')
@@ -28,15 +30,15 @@ function credentialReady(alias:string,days:string,taskCheck:'active'|'all'){
     AND NOT EXISTS(SELECT 1 FROM public.email_tasks t WHERE t.credential_id=${alias}.id ${taskCheck==='active'?"AND t.status IN('queued','sending')":''})`;
 }
 const definitions={
-  sessions:{table:'sessions',order:'COALESCE(r.revoked_at,LEAST(r.idle_expires_at,r.absolute_expires_at)),r.id',days:7,predicate:(day:string)=>`COALESCE(r.revoked_at,LEAST(r.idle_expires_at,r.absolute_expires_at))<=${cutoff(day)}`},
-  credentials:{table:'one_time_credentials',order:'COALESCE(r.consumed_at,r.revoked_at,r.expires_at),r.id',days:7,predicate:(day:string)=>credentialReady('r',day,'all')},
-  task_links:{table:'email_tasks',order:'r.updated_at,r.id',days:7,predicate:(day:string)=>`r.status IN('sent','failed','cancelled') AND r.credential_id IS NOT NULL AND EXISTS(SELECT 1 FROM public.one_time_credentials c WHERE c.id=r.credential_id AND ${credentialReady('c',day,'active')})`},
-  mail:{table:'email_tasks',order:'r.updated_at,r.id',days:90,predicate:(day:string)=>`r.status IN('sent','failed','cancelled') AND r.updated_at<=${cutoff(day)}`},
-  idempotency:{table:'idempotency_records',order:'r.expires_at,r.id',days:0,predicate:(day:string)=>`r.expires_at<=${cutoff(day)}`},
-  heartbeats:{table:'worker_heartbeats',order:'r.last_seen_at,r.worker_id',days:1,predicate:(day:string)=>`r.last_seen_at<=${cutoff(day)}`},
-  audit:{table:'audit_events',order:'r.created_at,r.id',days:180,predicate:(day:string)=>`r.created_at<=${cutoff(day)}`},
-  security:{table:'security_events',order:'r.created_at,r.id',days:90,predicate:(day:string)=>`r.created_at<=${cutoff(day)}`},
-  rate_limits:{table:'rate_limit_buckets',order:'r.expires_at,r.scope,r.key_digest,r.window_start',days:0,predicate:(day:string)=>`r.expires_at<=${cutoff(day)} AND (r.locked_until IS NULL OR r.locked_until<=clock_timestamp())
+  sessions:{table:'sessions',days:7,predicate:(day:string)=>`COALESCE(r.revoked_at,LEAST(r.idle_expires_at,r.absolute_expires_at))<=${cutoff(day)}`},
+  credentials:{table:'one_time_credentials',days:7,predicate:(day:string)=>credentialReady('r',day,'all')},
+  task_links:{table:'email_tasks',days:7,predicate:(day:string)=>`r.status IN('sent','failed','cancelled') AND r.credential_id IS NOT NULL AND EXISTS(SELECT 1 FROM public.one_time_credentials c WHERE c.id=r.credential_id AND ${credentialReady('c',day,'active')})`},
+  mail:{table:'email_tasks',days:90,predicate:(day:string)=>`r.status IN('sent','failed','cancelled') AND r.updated_at<=${cutoff(day)}`},
+  idempotency:{table:'idempotency_records',days:0,predicate:(day:string)=>`r.expires_at<=${cutoff(day)}`},
+  heartbeats:{table:'worker_heartbeats',days:1,predicate:(day:string)=>`r.last_seen_at<=${cutoff(day)}`},
+  audit:{table:'audit_events',days:180,predicate:(day:string)=>`r.created_at<=${cutoff(day)}`},
+  security:{table:'security_events',days:90,predicate:(day:string)=>`r.created_at<=${cutoff(day)}`},
+  rate_limits:{table:'rate_limit_buckets',days:0,predicate:(day:string)=>`r.expires_at<=${cutoff(day)} AND (r.locked_until IS NULL OR r.locked_until<=clock_timestamp())
     AND (r.window_start<>'1970-01-01 00:00:00+00'::timestamptz OR NOT EXISTS(SELECT 1 FROM public.rate_limit_buckets c WHERE c.scope=r.scope AND c.key_digest=r.key_digest AND c.window_start<>'1970-01-01 00:00:00+00'::timestamptz AND c.expires_at>clock_timestamp()))`},
 } as const;
 /** Fixed task registry only. Every selection, recheck, change and audit is one bounded transaction. */

@@ -7,13 +7,22 @@ export type Tx = Readonly<{
 }>;
 export function createDatabase(connectionString: string, max = 10) {
   const pool = new pg.Pool({ connectionString, max, connectionTimeoutMillis: 5000, idleTimeoutMillis: 30_000, application_name: 'honocraft' });
+  const disconnects=new Set<Promise<void>>();
+  pool.on('connect',client=>{
+    const ended=new Promise<void>(resolve=>client.once('end',resolve));
+    disconnects.add(ended);void ended.then(()=>disconnects.delete(ended));
+  });
   pool.on('error', () => { console.error('Database idle connection failed'); });
-  return { pool, orm: drizzle(pool), close: () => pool.end() };
+  return { pool, orm: drizzle(pool), close: async () => {
+    await pool.end();
+    // Keep the process shutdown deadline active until sockets, not just pool entries, are gone.
+    await Promise.all([...disconnects]);
+  } };
 }
 export type Database = ReturnType<typeof createDatabase>;
 
 /** Independent mode is only for short session-read, rate-limit, failure-event, queue and file-cleanup transactions.
- * Fixed expiry function calls also use independent mode; those functions acquire coordination inside PostgreSQL.
+ * Fixed retention batches also use independent mode; expiry functions acquire coordination inside PostgreSQL.
  * Protected business writes must use shared or exclusive.
  * No password hashing, SMTP, image conversion or other external work belongs inside this callback. */
 export async function withTransaction<T>(pool: Pool, mode: LockMode, handler: (tx: Tx) => Promise<T>): Promise<T> {

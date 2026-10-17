@@ -37,7 +37,8 @@ export async function startTestPostgres() {
     await pool.query('SELECT 1');
     return { pool, connectionString, async close() {
       await pool.end();
-      await execFile(pg_ctl, ['-D', data, '-m', 'fast', '-w', 'stop'], { timeout: 15_000 });
+      // Pool.end may resolve before every socket closes; let the server wait for disconnects.
+      await execFile(pg_ctl, ['-D', data, '-m', 'smart', '-t', '10', '-w', 'stop'], { timeout: 15_000 });
       await rm(root, { recursive: true, force: true });
     } };
   } catch (error) {

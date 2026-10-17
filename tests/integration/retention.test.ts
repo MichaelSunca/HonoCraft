@@ -11,6 +11,7 @@ import {enqueueMail} from '../../apps/server/src/modules/mail/outbox.js';
 import {appendAudit} from '../../apps/server/src/modules/audit/writer.js';
 import {appendSecurityEvent} from '../../apps/server/src/modules/audit/security-writer.js';
 import {assertMaintenanceRole,pruneBatch} from '../../apps/server/src/modules/maintenance/retention.js';
+import {pruneRetainedRecords} from '../../apps/server/src/modules/maintenance/retention-runner.js';
 let database:Awaited<ReturnType<typeof startTestPostgres>>,maintenance:pg.Pool,web:pg.Pool,worker:pg.Pool;
 const meta=()=>({requestId:randomUUID(),ip:'127.0.0.1',userAgent:'retention test'});
 const keyring={activeKeyId:'v1',keys:new Map([['v1',Buffer.alloc(32,4)]])};
@@ -76,6 +77,15 @@ it('rejects arbitrary task identifiers and invalid retention or batch parameters
 });
 it('exposes only bounded fixed retention selections without granting audit update or runtime execution',async()=>{
   for(const pool of [web,worker])await expect(pool.query("SELECT * FROM public.lock_retention_candidates('audit',180,1)")).rejects.toMatchObject({code:'42501'});
-  for(const args of [['users',0,1],['audit',0,1],['sessions',0,1],['credentials',1,1],['mail',1,1],['audit',180,1001],[null,180,1]])await expect(maintenance.query('SELECT * FROM public.lock_retention_candidates($1,$2,$3)',args)).rejects.toMatchObject({code:'22023'});
+  const invalid:Array<[string|null,number,number]>=[['users',0,1],['audit',0,1],['sessions',0,1],['credentials',1,1],['mail',1,1],['audit',180,1001],[null,180,1]];
+  for(const args of invalid)await expect(maintenance.query('SELECT * FROM public.lock_retention_candidates($1,$2,$3)',args)).rejects.toMatchObject({code:'22023'});
   await expect(maintenance.query("UPDATE audit_events SET action='tampered'")).rejects.toMatchObject({code:'42501'});const fn=(await database.pool.query("SELECT prosecdef,proconfig FROM pg_proc WHERE proname='lock_retention_candidates'")).rows[0];expect(fn.prosecdef).toBe(true);expect(fn.proconfig.some((value:string)=>value.startsWith('search_path=pg_catalog'))).toBe(true);
+});
+it('drains retained mail links and old credentials across independent bounded runtime batches',async()=>{
+  const actor=await identity(database.pool);for(let i=0;i<3;i++){const reference=await token(actor.userId);await mail(reference);}
+  const counts=await pruneRetainedRecords(maintenance,'runtime',{batchSize:1});expect(counts.task_links).toBe(3);expect(counts.credentials).toBe(3);expect((await database.pool.query('SELECT credential_id FROM email_tasks')).rows).toEqual([{credential_id:null},{credential_id:null},{credential_id:null}]);expect((await database.pool.query('SELECT id FROM one_time_credentials')).rowCount).toBe(0);expect((await database.pool.query("SELECT id FROM audit_events WHERE action='maintenance.credentials.completed'")).rowCount).toBe(3);
+});
+it.each(['audit','selector'] as const)('rejects a maintenance connection missing its %s capability',async capability=>{
+  await database.pool.query(capability==='audit'?'REVOKE INSERT ON public.audit_events FROM honocraft_maintenance':'REVOKE EXECUTE ON FUNCTION public.lock_retention_candidates(text,integer,integer) FROM honocraft_maintenance');
+  await expect(assertMaintenanceRole(maintenance)).rejects.toThrow('MAINTENANCE_ROLE_INCOMPATIBLE');
 });
