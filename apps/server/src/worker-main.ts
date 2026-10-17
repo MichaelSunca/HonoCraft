@@ -6,6 +6,7 @@ import {checkDatabaseCompatibility} from './infrastructure/startup.js';
 import {createSmtpTransport} from './modules/mail/smtp.js';
 import {runMailWorker} from './modules/mail/runner.js';
 import {runFileCleanup} from './modules/files/runner.js';
+import {runExpiryWorker} from './modules/maintenance/expiry.js';
 let database:Database|undefined;
 const controller=new AbortController();
 let deadline:ReturnType<typeof setTimeout>|undefined;
@@ -27,7 +28,8 @@ try{
     createSmtpTransport(config.smtp),controller.signal,event=>{
       if(event==='ready')console.log('Worker ready');
       else console.log(JSON.stringify({event:`mail.${event}`}));
-    }),runFileCleanup(database.pool,config.fileStorageRoot,controller.signal,({event,...counts})=>console.log(JSON.stringify({event:`files.${event}`,...counts})))];
+    }),runFileCleanup(database.pool,config.fileStorageRoot,controller.signal,({event,...counts})=>console.log(JSON.stringify({event:`files.${event}`,...counts}))),
+    runExpiryWorker(database.pool,controller.signal,({event,...counts})=>console.log(JSON.stringify({event:`expiry.${event}`,...counts})))];
   try{await Promise.all(jobs);}finally{controller.abort();await Promise.allSettled(jobs);}
 }catch(error){
   const safe=error instanceof ConfigurationError?error.message:

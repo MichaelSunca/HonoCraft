@@ -11,6 +11,8 @@ import {startSmtpFixture} from '../helpers/smtp.js';
 import {migrate} from '../../apps/server/src/infrastructure/migrations.js';
 import {withTransaction} from '../../apps/server/src/infrastructure/db.js';
 import {enqueueMail,claimTasks} from '../../apps/server/src/modules/mail/outbox.js';
+import {identity} from '../helpers/identity.js';
+import {issueToken} from '../../apps/server/src/infrastructure/crypto.js';
 let database:Awaited<ReturnType<typeof startTestPostgres>>,smtp:Awaited<ReturnType<typeof startSmtpFixture>>;
 let directory:string,env:NodeJS.ProcessEnv,mailKey:Buffer,epoch:string,child:ChildProcess|undefined;
 beforeAll(async()=>{database=await startTestPostgres();});
@@ -74,4 +76,13 @@ it('reclaims expired staged media while SMTP deliveries remain in flight',async(
   await database.pool.query("INSERT INTO file_objects(id,storage_key,purpose,content_type,byte_size,width,height,updated_at) VALUES($1,$2,'brand_logo','image/webp',9,1,1,clock_timestamp()-interval '25 hours')",[id,key]);
   await enqueue();await enqueue();const process=launch();await process.ready();await until(()=>smtp.messages.length===2);await until(async()=>(await database.pool.query('SELECT id FROM file_objects WHERE id=$1',[id])).rowCount===0);await expect(readFile(join(root,key))).rejects.toThrow();expect((await database.pool.query("SELECT id FROM email_tasks WHERE status='sending'")).rowCount).toBe(2);
   await until(async()=>readFile(temporary).then(()=>false,()=>true));child!.kill('SIGTERM');smtp.release();expect(await process.exited).toBe(0);expect(process.output()).toContain('files.cleanup_completed');expect(process.output()).toContain('files.loose_cleanup_completed');
+});
+it('expires due invitations, email requests and credentials while existing SMTP work remains in flight',async()=>{
+  await enqueue();await enqueue();const actor=await identity(database.pool,'admin'),invite=randomUUID(),change=randomUUID(),credential=randomUUID(),issued=issueToken(),email=randomUUID()+'@example.test';
+  await database.pool.query("INSERT INTO invites(id,email,normalized_email,inviter_id,expires_at) VALUES($1,$2,$2,$3,clock_timestamp()-interval '5 minutes')",[invite,email,actor.userId]);await database.pool.query("INSERT INTO invite_roles(invite_id,role_id,role_id_at_issue,role_code,role_name,role_version_at_issue) SELECT $1,id,id,code,name,version FROM roles WHERE code='user'",[invite]);
+  await database.pool.query("INSERT INTO email_change_requests(id,user_id,requested_by,initiated_by_self,new_email,normalized_new_email,expires_at) VALUES($1,$2,$2,true,$3,$3,clock_timestamp()-interval '5 minutes')",[change,actor.userId,email]);
+  const expires=(await database.pool.query<{expires_at:Date}>("INSERT INTO one_time_credentials(id,purpose,token_hash,user_id,subject_version,target_email,normalized_target_email,credential_epoch,expires_at) VALUES($1,'password_reset',$2,$3,1,$4,$4,$5,clock_timestamp()-interval '5 minutes') RETURNING expires_at",[credential,issued.hash,actor.userId,actor.userId+'@example.test',epoch])).rows[0]!.expires_at;
+  const task=await withTransaction(database.pool,'shared',tx=>enqueueMail(tx,{activeKeyId:'v1',keys:new Map([['v1',mailKey]])},{eventId:credential,credentialId:credential,purpose:'password_reset',recipient:actor.userId+'@example.test',displayName:'User',instanceName:'HonoCraft',locale:'en',timeZone:'UTC',token:issued.token,expiresAt:expires.toISOString()}));
+  const process=launch();await process.ready();await until(()=>smtp.messages.length===2);await until(()=>process.output().includes('expiry.completed'));expect((await database.pool.query('SELECT status,version FROM invites WHERE id=$1',[invite])).rows[0]).toEqual({status:'expired',version:2});expect((await database.pool.query('SELECT status,version FROM email_change_requests WHERE id=$1',[change])).rows[0]).toEqual({status:'expired',version:2});expect((await database.pool.query('SELECT revoked_at FROM one_time_credentials WHERE id=$1',[credential])).rows[0].revoked_at).not.toBeNull();expect((await database.pool.query('SELECT status,recipient,payload_ciphertext FROM email_tasks WHERE id=$1',[task])).rows[0]).toEqual({status:'cancelled',recipient:null,payload_ciphertext:null});
+  expect((await database.pool.query("SELECT id FROM email_tasks WHERE status='sending'")).rowCount).toBe(2);child!.kill('SIGTERM');smtp.release();expect(await process.exited).toBe(0);expect(process.output()).not.toContain(issued.token);expect(process.output()).not.toContain(email);
 });

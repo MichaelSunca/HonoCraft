@@ -32,7 +32,7 @@
 Task 1: 基座、配置/契约校验已实现；单元测试覆盖配置、契约、权限策略与加密工具。
 Task 2: SQL 迁移、事务预算与真实 PG 约束测试已实现；Drizzle schema 映射及升级完整验证待补。
 Task 3: in progress — 权限策略已实现，正在接入统一写入口、审计、幂等及限流。
-Task 4: 加密 outbox、模板、投递前复核、租约/CAS/重试及 SMTP 已实现；常驻循环、心跳及通知发送限流已实现；到期对象、媒体与留存清理待实现。
+Task 4: 加密 outbox、模板、投递前复核、租约/CAS/重试及 SMTP 已实现；常驻循环、心跳、通知发送限流、到期邀请/邮箱请求/凭证维护及媒体回收已实现；运行记录与日志留存清理仍待实现。
 Task 5: 会话、Argon2 密码、登录、HTTP Cookie/Origin/CSRF、本人资料与退出已实现；初始化服务、完成接口、Web 进程和密钥加载已实现；初始化 CLI 已实现；初始化页面、近期验证、本人改密及会话管理 API 已接入；管理员恢复消费等后续账号流程仍待交付。
 Task 6: in progress — 注册、验证/重发、找回/重置密码及本人/管理员邮箱变更服务和 HTTP 已实现；账号状态管理 API 及本人邮箱操作界面已实现；完整生命周期验收待补。
 Task 7: in progress — 邀请、角色、资格及权限目录 API 已实现；用户查询、资料修正、状态/软删除、角色替换、管理员重置邮件和邮箱变更 API 已实现；品牌普通字段和安全策略整组设置 API、审计/安全事件/邮件任务只读 API 已实现；媒体等管理接口仍未完成。
@@ -360,3 +360,16 @@ Task 10–12: pending（已有前端构建与局部浏览器验收，完整发�
 - 已实际查看 `.tools/notes-mobile.png`：中文深色 360px，120 码点标题、长正文、字段说明、焦点边框和底部确认按钮可用，无横向溢出；不等同完整 WCAG 验收。新增 MODULES 指南说明实际代码边界、目录启停、owner/事务/审计/前端恢复及直接测试入口，裁剪和独立开发者计时明确未验收。
 - 当前源码稳定后的 `pnpm check`、前端构建和完整单元 85/85 通过；构建保留上游 Zod 注释与主包 556.52kB 提示，笔记懒加载块 10.94kB。完整服务端回归本轮 382/383：account-security 的“does not let an idempotent password-change replay bypass a newly active account lock”在错误密码循环收到 SESSION_INVALID 而非 AUTH_FAILED；最终独立核对及完整浏览器结果另记。上一阶段 383/383 的时点保持明确，不作为本轮整套绿色。
 - 最终完整浏览器 106/108（约 6.3 分钟），其中全部笔记 12/12 通过。失败为 logs 的“guards each log page independently and exposes only the current permitted navigation”和 role-management 的“maps copy validation to visible inputs”，两处均先 SESSION_INVALID，分别捕获 future last_seen_at 236.490ms / 252.940ms，未到达预期表单/权限结果；原诊断保存在 .tools/browser-diagnostics。独立复查这两项 2/2 通过。同代码独立核对 account-security、http-notes、example-module、ops-module、web-process、startup 共 58/58 通过（38.08 秒），含原失败的账号锁用例；该结果不替代 382/383 的完整回归记录。文档本地链接及 git diff --check 通过。全量绿色、稳定目标环境、裁剪/试用及后续维护/恢复/发布验收仍待完成。
+
+## 2026-10-17 bounded expiration maintenance
+
+- 新增前向迁移 0007，提供仅 runtime_worker 可执行的固定到期函数：邀请、邮箱请求、一次性凭证；唯一参数为 1–100 批大小，NULL/越界拒绝，不接受对象 ID、状态、时间或 SQL。SECURITY DEFINER 固定 search_path，所有表 schema 限定；Web/maintenance/PUBLIC 无调用权限，也未给 Worker 用户/请求/凭证通用写权限。
+- 函数先取 UPDATE 协调，再锁相应有序用户/角色与对象/凭证，等待后重新检查状态和到期时刻，锁忙对象跳过。只改变到期 Pending 对象或到期未终态凭证；邀请/邮箱请求变 expired 并递增版本，相关凭证撤销、queued/sending 邮件取消，完整地址/密文/nonce/tag/key 立即清除，租约版本递增。账号邮箱、密码、状态与版本不因邮箱请求到期而改变。
+- 状态、凭证、邮件与开始/完成/对象审计同事务；三类函数分别验证末端审计失败回滚。已消费/已撤销凭证、有效后续凭证、未来或终态对象保留。消费接口在维护前已按到期时刻拒绝链接，后台维护不承担即时授权。
+- 新增并行 expiry 循环：启动及每分钟逐种固定任务执行，每批最多 100，事务和连接在批间释放，批满继续处理，退出信号阻止下一批。沿用 5 连接 Worker 池、现有 SIGTERM 排空与三十秒截止，不引入通用脚本调度或维护账号。日志只记录固定 started/completed/failed 与数量。
+- 首批函数空行为 RED 为 9 失败/1 通过；额度用尽曾使自动审核无法完成，恢复后先确认未执行的修改，再实现函数。SQL 首轮目标 10/10 通过。真实 Worker 进程 RED 等待不到到期事件；接入循环后，held SMTP 中两条 Sending 不妨碍邀请/邮箱请求/凭证到期及待发载荷擦除，退出正常，未打印 Token/地址。
+- 扩展验证等待用户锁期间邀请和邮箱请求续期、聚合对象锁忙、101 条凭证分两批、预先 abort、并发去重、三类末端审计回滚和临时表遮蔽。初次静态检查发现测试中必有一行的结果缺少 TypeScript 非空断言，修正后 pnpm check 通过；最终目标 expiry 16 项、Worker 6 项共 22/22 通过（13.76 秒）。完整单元/服务端/浏览器回归结果另记。
+- 本轮未交付留存清理、模块彻底裁剪/试用、运维恢复、operation 查询、Drizzle 映射、完整编译/OpenAPI/Compose/CI、备份恢复、性能和全部 P0 验收，完整开发目标仍进行中。
+- 本轮完整单元 85/85 通过；完整 PG/HTTP 回归 399/400，http-media 的非法图片保留原头像场景在读取 me 时得到没有 data 的响应，原断言只报 TypeError，未捕获到业务码，不能直接确认原因。补充安全的状态/错误码断言后，关联五文件复查 53/54，原场景通过，但 Origin/CSRF/版本场景出现 401 而非预期 409；进一步固定断言 VERSION_CONFLICT 后，两项独立复查 2/2 通过，未放宽业务或认证要求。
+- 完整浏览器进程在第 106 项后被中断，确认原句柄已失且 OS 无运行中的 Playwright/Vitest 后才续跑。实际日志为 102 通过、4 失败、2 未完成，不能按最后序号认作 106 通过。四项失败为 invitation-management 只读筛选、logs 权限导航、notes 已确认写入后重读、notes 中文字段/窄屏；都先 SESSION_INVALID，捕获未来 last_seen_at 约 1038–1930ms，诊断保存在 `.tools/browser-diagnostics/expiry-interrupted`。这四项及尚未完成的两项 user-management 用例独立运行 6/6 通过（27.4 秒）；该分批结果不等同完整 108/108。
+- 收尾 pnpm check 和 git diff --check 通过；阶段保留 399/400 的完整集成与中断浏览器事实。后续仍需在稳定环境完成整套验证，不把到期维护完成等同全部 P0 完成。

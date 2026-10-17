@@ -13,6 +13,7 @@ export function createDatabase(connectionString: string, max = 10) {
 export type Database = ReturnType<typeof createDatabase>;
 
 /** Independent mode is only for short session-read, rate-limit, failure-event, queue and file-cleanup transactions.
+ * Fixed expiry function calls also use independent mode; those functions acquire coordination inside PostgreSQL.
  * Protected business writes must use shared or exclusive.
  * No password hashing, SMTP, image conversion or other external work belongs inside this callback. */
 export async function withTransaction<T>(pool: Pool, mode: LockMode, handler: (tx: Tx) => Promise<T>): Promise<T> {
