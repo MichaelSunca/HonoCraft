@@ -7,10 +7,10 @@ export type LimitDecision={allowed:true}|{allowed:false;scope:string;retryAfter:
 type LockedBucket={count:number;locked_until:Date|null;last_accepted_at:Date|null;failure_window_started_at:Date|null};
 
 async function lockSentinel(tx:Tx,scope:string,digest:Buffer):Promise<LockedBucket> {
-  await tx.query(`INSERT INTO rate_limit_buckets(scope,key_digest,window_start,expires_at)
-    VALUES ($1,$2,$3,clock_timestamp()+interval '1 day') ON CONFLICT DO NOTHING`,[scope,digest,sentinel]);
-  return (await tx.query<LockedBucket>(`SELECT count,locked_until,last_accepted_at,failure_window_started_at
-    FROM rate_limit_buckets WHERE scope=$1 AND key_digest=$2 AND window_start=$3 FOR UPDATE`,[scope,digest,sentinel])).rows[0]!;
+  // One statement owns the row before cleanup can select it; quota fields stay unchanged on conflict.
+  return (await tx.query<LockedBucket>(`INSERT INTO rate_limit_buckets AS state(scope,key_digest,window_start,expires_at)
+    VALUES ($1,$2,$3,clock_timestamp()+interval '1 day') ON CONFLICT(scope,key_digest,window_start)
+    DO UPDATE SET scope=state.scope RETURNING count,locked_until,last_accepted_at,failure_window_started_at`,[scope,digest,sentinel])).rows[0]!;
 }
 /** Debit every rule, or none. Anonymous callers decide whether a denied target quota is a uniform 202. */
 export async function consumeLimits(tx:Tx,key:Buffer,rules:readonly LimitRule[]):Promise<LimitDecision> {
