@@ -18,6 +18,7 @@ import {appendSecurityEvent} from '../audit/security-writer.js';
 import {enqueueMail} from '../mail/outbox.js';
 import {cancelCredentialTasks} from '../mail/cancellation.js';
 import {loadPublicSettings} from '../settings/public.js';
+import {assertHistoricalUserScope} from '../access/history.js';
 
 const schemas={'self-start':SelfEmailChangeSchema,'admin-start':AdminEmailChangeSchema,'self-cancel':SelfEmailCancelSchema,'admin-cancel':AdminEmailCancelSchema};
 type Kind=keyof typeof schemas;
@@ -41,6 +42,15 @@ async function accessAt(tx:Tx,user:User){const actor=await loadAccess(tx,user.id
 const highRisk=(roles:readonly RoleSnapshot[])=>roles.some(role=>!role.isDelegable||['admin','super_admin'].includes(role.code)||role.permissionCodes.some(code=>permissionDefinitions.find(p=>p.code===code)?.reserved));
 function eligible(user:User){return user.has_password&&((user.status==='active'&&user.email_verified_at!==null)||(user.status==='pending'&&user.creation_source==='registration'&&user.registration_role_id!==null));}
 const mask=(email:string)=>email[0]+'***@'+email.split('@')[1];
+export async function authorizeEmailOperationResult(tx:Tx,context:SessionContext,kind:Kind,raw:unknown){
+  const stored=StoredPolicy.parse(raw);
+  if(kind.startsWith('self')){if(stored.user_id!==context.actor.userId)throw new AppError('FORBIDDEN');}
+  else{
+    if(kind==='admin-cancel'&&stored.requested_by!==context.actor.userId)throw new AppError('FORBIDDEN');
+    await assertHistoricalUserScope(tx,context,stored.user_id,stored.roles,stored.high);
+  }
+  return {targetId:stored.user_id,resourceId:stored.request_id};
+}
 async function common(tx:Tx,user:User){const settings=await loadPublicSettings(tx);return {recipient:user.email,displayName:user.display_name,instanceName:settings.instance_name,locale:user.locale??settings.default_locale,timeZone:settings.timezone};}
 async function revoke(tx:Tx,userId:string,requestIds:string[],pendingVerification=false){
   const ids=(await tx.query<{id:string}>(`UPDATE one_time_credentials SET revoked_at=clock_timestamp() WHERE user_id=$1 AND consumed_at IS NULL AND revoked_at IS NULL
@@ -115,8 +125,8 @@ export function createEmailChange(pool:Pool,secrets:Secrets){
           if(!('new_email' in input)&&input.request_id!==stored.request_id)throw new AppError('FORBIDDEN');
           if('id' in input){
             if(kind==='admin-cancel'&&stored.requested_by!==context.actor.userId)throw new AppError('FORBIDDEN');
-            const current=await userAt(tx,stored.user_id),access=await accessAt(tx,current);assertManageableTarget(context.actor,{...access,roles:stored.roles});
-            await authorizeAdmin(tx,context,input,current,access,stored.high);
+            const current=await userAt(tx,stored.user_id),access=await accessAt(tx,current),historicalHigh=await assertHistoricalUserScope(tx,context,stored.user_id,stored.roles,stored.high);
+            await authorizeAdmin(tx,context,input,current,access,historicalHigh);
           }
         },
         summarize:(data,context)=>({outcome:kind.endsWith('start')?'email_change_requested':'email_change_cancelled',resource_id:requestId,version:data.user_version,completed_at:context.now.toISOString()}),

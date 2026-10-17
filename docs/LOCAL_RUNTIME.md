@@ -103,6 +103,39 @@ Worker 每秒轮询，单进程最多两个活动投递；邮件/文件/到期�
 每批最多 1000 行，批间提交并释放连接；开始/完成审计和计数与删除（或断开引用）同事务，审计失败整批回滚。维护账号没有用户/角色的更新权限，也没有审计 UPDATE 权限；仅 maintenance 能执行的 `lock_retention_candidates` 固定函数提供有界 `SKIP LOCKED` 选择，不能由 Web/Worker 直接调用。Worker 输出只有固定事件、任务数量及中断标记，其中 `task_links` 是断开引用数，其他字段为删除数；不输出连接串、地址或原始异常。
 
 
+## 操作结果查询
+
+请求响应丢失后，可用原操作名和原 UUID 幂等键查询已提交结果：
+
+```http
+GET /api/v1/operations/users.status/00000000-0000-4000-8000-000000000001
+```
+
+携带当前有效会话 Cookie，不需要 CSRF 或原写入正文。成功固定返回 200，`data` 只有 `outcome`、`resource_id`、`version`、`completed_at`；其中 ID/版本可为 null，外层仍包含 request_id。即使原写入成功状态是 201/202，查询也是 200，没有 replayed 标记。响应 no-store，不返回姓名、邮件地址、笔记正文、旧资源 DTO、策略上下文、凭证或请求摘要。
+
+可查操作来自 contracts 的 `OPERATION_NAMES` 与服务端固定策略注册表，两者通过类型检查对应；新增操作须补领域历史授权和真实写入后查询测试。
+
+| 分组 | 操作名 |
+| --- | --- |
+| 会话/本人密码 | auth.session.revoke、auth.sessions.revoke_others、me.password.change |
+| 图片 | me.avatar.update/delete、settings.branding.logo.update/delete、settings.branding.favicon.update/delete |
+| 设置 | settings.branding、settings.security |
+| 邀请 | invitations.create/resend/revoke |
+| 角色 | roles.create/update/copy/delete/eligibility |
+| 用户管理 | users.profile/status/delete/roles/reset |
+| 邮箱请求 | email-change.self-start/self-cancel/admin-start/admin-cancel |
+| 参考笔记 | example.notes.create/update/delete |
+
+名称含 `/` 的写法表示分别列出的操作后缀，例如 `roles.create` 与 `roles.update`，不是实际 URL 中的斜杠。共 31 项；参考模块需部署配置和当前目录均开启，并持有对应当前读取/写入权限。
+
+查询只查当前 actor + operation + key 的记录；超级管理员也不能查询另一操作者的键。键 UUID 大小写统一用于摘要查找，不支持 actor_id、owner_id 或其他 query 字段，传入多余字段为 422。未知操作/非法键、尚无已提交可见记录、保留期已过、摘要密钥代次不匹配、缺权限/超出目标范围或历史元数据不足，统一 404 OPERATION_NOT_FOUND。原会话已被密码/授权/状态变更撤销时先返回 401，须重新登录；新会话仍只能查本人记录。
+
+角色/用户/邀请/邮箱请求复核历史与当前保护范围；角色删除后依赖原身份快照，不能因为目标已不存在而放宽检查。用户软删除清空当前角色后，原受保护范围仍保留；已移除的历史角色现在变为不可委派，也会影响读取资格。本人笔记删除后可读取本人的最小成功摘要。查询不需要重交旧版本、原密码或确认文本，也不重新触发写入所需的近期验证；原同键写入重放仍保留原有确认、近期验证和授权规则。
+
+查询使用同一有预算事务，按安全协调 → 当前用户/角色 → 会话顺序验证，再读取结果；等待安全变更提交后重新认证。已提交前提下也不延长结果的 24 小时保留期、不重新发邮件或新增业务审计，沿用正常会话活跃时间更新。锁/语句/事务超时为 503 BUSY_RETRY，Retry-After 为 2 秒；其他数据库故障仍是依赖/内部失败，不伪装成不存在。
+
+404 不能证明原写入一定失败，也不意味着可以自动换新幂等键再次提交。先核对目标实际状态；结果不明时保留原操作及键。当前页面已有的同键重试继续可用，统一的“查询结果”页面交互尚未接入。
+
 ## 已接入的公开认证接口
 
 在已初始化实例上，以下同源 JSON POST 接口可用；所有请求须携带与 PUBLIC_ORIGIN 一致的 Origin，遵守大小和来源限流。相应页面已接入同源 API，接口及主要页面流程使用真实 HTTP / Chromium 测试验证。

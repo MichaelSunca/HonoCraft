@@ -1,16 +1,18 @@
 import { timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import { AppError } from '@honocraft/contracts/errors';
+import {OperationSummarySchema} from '@honocraft/contracts/operations';
 import { databaseNow, type Tx } from './db.js';
 import { keyedDigest, requestDigest } from './crypto.js';
 
-export const operationSummarySchema=z.strictObject({
-  outcome:z.string().regex(/^[a-z_]{1,40}$/),resource_id:z.uuid().nullable(),version:z.number().int().positive().nullable(),completed_at:z.iso.datetime(),
-});
+export const operationSummarySchema=OperationSummarySchema;
 export type OperationSummary=z.infer<typeof operationSummarySchema>;
 export type DigestKey=Readonly<{id:string;key:Buffer}>;
 export type StoredResult=Readonly<{summary:OperationSummary;status:number;replayed:boolean}>;
 type RecordRow={request_digest:Buffer;digest_key_id:string;policy_context:unknown;result_summary:unknown;http_status:number;expires_at:Date};
+export function operationKeyDigest(key:Buffer,actorId:string,operation:string,idempotencyKey:string):Buffer{
+  return keyedDigest(key,'honocraft.idempotency.v1',JSON.stringify([actorId,operation,idempotencyKey.toLowerCase()]));
+}
 type IdempotentOptions<S extends z.ZodType>={
   actorId:string;operation:string;key:string;input:unknown;digestKey:DigestKey;policySchema:S;
   authorizeStored:(context:z.output<S>)=>Promise<void>;
@@ -21,7 +23,7 @@ export async function runIdempotent<S extends z.ZodType>(tx:Tx,options:Idempoten
   const key=z.uuid().safeParse(options.key);
   if (!key.success) throw new AppError('VALIDATION_ERROR',{idempotency_key:['Expected UUID']});
   const scope=JSON.stringify([options.actorId,options.operation,key.data.toLowerCase()]);
-  const digest=keyedDigest(options.digestKey.key,'honocraft.idempotency.v1',scope);
+  const digest=operationKeyDigest(options.digestKey.key,options.actorId,options.operation,key.data);
   const body=requestDigest(options.digestKey.key,options.operation,options.input);
   // Stable operation/actor/key lock also covers the not-yet-inserted row; a collision only serializes unrelated requests.
   try { await tx.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[scope]); }

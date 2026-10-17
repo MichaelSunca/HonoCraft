@@ -55,6 +55,28 @@ async function putPermissions(tx:Tx,id:string,codes:readonly PermissionCode[]){
   await tx.query('INSERT INTO role_permissions(role_id,permission_id) SELECT $1,id FROM permissions WHERE code=ANY($2::text[])',[id,codes]);
 }
 async function mustRead(tx:Tx,id:string){const row=await readRoleRow(tx,id);if(!row)throw new AppError('NOT_FOUND');return row;}
+async function historicalAuthority(tx:Tx,context:SessionContext,kind:Kind,stored:z.infer<typeof StoredPolicy>){
+  if(kind==='eligibility'&&!isSuperAdmin(context.actor))throw new AppError('FORBIDDEN');
+  if(kind==='eligibility'&&stored.before&&stored.after)qualificationAuthority(context,stored.before,stored.after);
+  let high=stored.high_risk;
+  for(const role of [stored.before,stored.after])if(role){await codesAllowed(tx,context,role.permissionCodes);high ||=reserved(role.permissionCodes);}
+  if(stored.before){
+    if(kind==='copy')assertRoleCopyable(context.actor,stored.before,stored.assigned_to_privileged_before);else assertRoleEditable(context.actor,stored.before,stored.assigned_to_privileged_before);
+    const current=await readRoleRow(tx,stored.before.id);
+    if(current){const role=snapshot(current);await codesAllowed(tx,context,role.permissionCodes);high ||=reserved(role.permissionCodes);
+      if(kind==='copy')assertRoleCopyable(context.actor,role,current.assigned_to_privileged);else assertRoleEditable(context.actor,role,current.assigned_to_privileged);
+    }else if(kind!=='delete')throw new AppError('NOT_FOUND');
+  }
+  if(stored.after){const current=await readRoleRow(tx,stored.after.id);if(current){await codesAllowed(tx,context,current.permission_codes);high ||=reserved(current.permission_codes);}}
+  if(high&&!isSuperAdmin(context.actor))throw new AppError('FORBIDDEN');return high;
+}
+export async function authorizeRoleOperationResult(tx:Tx,context:SessionContext,kind:Kind,raw:unknown){
+  const stored=StoredPolicy.parse(raw);
+  if(kind==='create'?stored.before!==null||stored.after===null:kind==='delete'?stored.before===null||stored.after!==null:stored.before===null||stored.after===null)throw new AppError('NOT_FOUND');
+  if(kind!=='copy'&&stored.before&&stored.before.id!==stored.id)throw new AppError('NOT_FOUND');
+  if((stored.after?.id??stored.before?.id)!==stored.id)throw new AppError('NOT_FOUND');
+  await historicalAuthority(tx,context,kind,stored);return stored.id;
+}
 export function createRoleManagement(pool:Pool,secrets:Secrets){
   function definition(kind:Kind,meta:RequestMeta){
     let before:RoleRow|undefined,after:RoleRow|undefined,high=false,affected:string[]=[];
@@ -119,18 +141,7 @@ export function createRoleManagement(pool:Pool,secrets:Secrets){
       },
       idempotency:{policySchema:StoredPolicy,
         authorizeStored:async(tx,context,input,stored)=>{
-          if(input.kind==='eligibility'&&!isSuperAdmin(context.actor))throw new AppError('FORBIDDEN');
-          if(input.kind==='eligibility'&&stored.before&&stored.after)qualificationAuthority(context,stored.before,stored.after);
-          let historicalHigh=stored.high_risk;
-          for(const role of [stored.before,stored.after])if(role){await codesAllowed(tx,context,role.permissionCodes);historicalHigh ||=reserved(role.permissionCodes);}
-          if(stored.before){
-            if(input.kind==='copy')assertRoleCopyable(context.actor,stored.before,stored.assigned_to_privileged_before);else assertRoleEditable(context.actor,stored.before,stored.assigned_to_privileged_before);
-            const current=await readRoleRow(tx,stored.before.id);
-            if(current){const role=snapshot(current);await codesAllowed(tx,context,role.permissionCodes);historicalHigh ||=reserved(role.permissionCodes);
-              if(input.kind==='copy')assertRoleCopyable(context.actor,role,current.assigned_to_privileged);else assertRoleEditable(context.actor,role,current.assigned_to_privileged);
-            }else if(input.kind!=='delete')throw new AppError('NOT_FOUND');
-          }
-          if(stored.after){const current=await readRoleRow(tx,stored.after.id);if(current){await codesAllowed(tx,context,current.permission_codes);historicalHigh ||=reserved(current.permission_codes);}}
+          const historicalHigh=await historicalAuthority(tx,context,input.kind,stored);
           await confirmation(tx,context,input,stored.before?.code??stored.after!.code,historicalHigh);
         },
         summarize:(data,context)=>({outcome:`role_${({create:'created',copy:'copied',update:'updated',delete:'deleted',eligibility:'qualified'} as const)[kind]}`,resource_id:data.id,version:'version' in data?data.version:before!.version,completed_at:context.now.toISOString()}),

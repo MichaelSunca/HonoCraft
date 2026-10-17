@@ -44,7 +44,7 @@
 | AC-37 | 邀请角色版本变化使旧链接失效，重发快照正确 | 候选覆盖 | [公开邀请](../../tests/integration/public-invitations.test.ts)、[邀请管理](../../tests/integration/invitation-management.test.ts) | 只改名/改权限/邀请人变化、旧新链接及单次消费 |
 | AC-38 | Worker 崩溃/接管/并发/耗尽尝试状态正确 | 缺验证 | [Worker 进程](../../tests/integration/worker-process.test.ts)、[投递](../../tests/integration/mail-worker.test.ts)、[SMTP](../../tests/integration/smtp.test.ts) | 实际 kill、供应商已受理后崩溃与三次耗尽组合证据；不承诺恰好一次 |
 | AC-39 | 邮箱请求替换/取消/Pending 修正及旧凭证失效 | 候选覆盖 | [邮箱接口](../../tests/integration/http-email-change.test.ts)、[本人邮箱页面](../../tests/e2e/self-email.spec.ts)、[到期维护](../../tests/integration/expiry.test.ts) | 请求与旧邮箱验证/重置凭证的完整状态矩阵 |
-| AC-40 | 同键不重复、换正文冲突、撤权不能取历史结果 | 缺交付物 | [幂等](../../tests/integration/idempotency.test.ts)、[写入口](../../tests/integration/mutation-gateway.test.ts)、[不确定结果页面](../../tests/e2e/uncertain-mutations.spec.ts) | GET operations 结果查询、当前授权与已删目标历史范围；逐写入口与丢响应回归 |
+| AC-40 | 同键不重复、换正文冲突、撤权不能取历史结果 | 缺验证 | [操作结果查询](../../tests/integration/http-operations.test.ts)、[幂等](../../tests/integration/idempotency.test.ts)、[写入口](../../tests/integration/mutation-gateway.test.ts)、[不确定结果页面](../../tests/e2e/uncertain-mutations.spec.ts) | 已有 31 种真实写入后查询及当前/历史范围回归；仍需统一前端查询交互、逐入口丢响应/过期记录后的完整验收 |
 
 ## 不由局部测试替代的发布门槛
 

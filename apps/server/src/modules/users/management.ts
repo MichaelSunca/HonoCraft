@@ -17,6 +17,7 @@ import {cancelCredentialTasks} from '../mail/cancellation.js';
 import {enqueueMail} from '../mail/outbox.js';
 import {loadPublicSettings} from '../settings/public.js';
 import {issueManagedPasswordReset} from './password-reset-mail.js';
+import {assertHistoricalUserScope} from '../access/history.js';
 
 const schemas={profile:UserProfileUpdateSchema,status:UserStatusUpdateSchema,delete:UserDeleteSchema,roles:UserRolesUpdateSchema,reset:UserPasswordResetSchema};
 type Kind=keyof typeof schemas;
@@ -41,6 +42,11 @@ async function targetAt(tx:Tx,id:string):Promise<Target>{
   const identity=await loadAccess(tx,id);if(!user||!identity)throw new AppError('NOT_FOUND');
   if(user.registration_role_id&&!identity.roles.some(role=>role.id===user.registration_role_id))identity.roles=[...identity.roles,...await readRoleSnapshots(tx,[user.registration_role_id])];
   return {user,identity};
+}
+export async function authorizeUserOperationResult(tx:Tx,context:SessionContext,kind:Kind,raw:unknown){
+  const stored=StoredPolicy.parse(raw);
+  if(kind!=='profile'&&kind!=='reset')assertSelfManagementAllowed(context.actor.userId,stored.id);
+  await assertHistoricalUserScope(tx,context,stored.id,stored.role_scope,stored.high_risk);return stored.id;
 }
 async function confirm(tx:Tx,context:SessionContext,input:Input,target:Target,high:boolean){
   if(high){if(!isSuperAdmin(context.actor)||!context.permissions.has('user:manage-privileged'))throw new AppError('TARGET_NOT_MANAGEABLE');requireRecentAuthentication(context.reauthenticatedAt,await databaseNow(tx));}
@@ -132,11 +138,8 @@ export function createUserManagement(pool:Pool,secrets:Secrets){
         authorizeStored:async(tx,context,input,stored)=>{
           if(stored.id!==input.id)throw new AppError('FORBIDDEN');
           if(input.kind!=='profile'&&input.kind!=='reset')assertSelfManagementAllowed(context.actor.userId,input.id);
-          const current=await targetAt(tx,input.id);assertManageableTarget(context.actor,current.identity);
-          assertManageableTarget(context.actor,{...current.identity,roles:stored.role_scope});
-          const currentHistorical=await readRoleSnapshots(tx,[...new Set(stored.role_scope.map(role=>role.id))]);
-          assertManageableTarget(context.actor,{...current.identity,roles:currentHistorical});
-          await confirm(tx,context,input,current,stored.high_risk||highRisk(current.identity.roles)||highRisk(currentHistorical));
+          const current=await targetAt(tx,input.id),historicalHigh=await assertHistoricalUserScope(tx,context,input.id,stored.role_scope,stored.high_risk);
+          await confirm(tx,context,input,current,historicalHigh);
         },
         summarize:(data,context)=>({outcome:outcomes[kind],resource_id:'id' in data?data.id:before.user.id,version:'version' in data?data.version:before.user.version,completed_at:context.now.toISOString()}),
         policyContext:data=>({id:'id' in data?data.id:before.user.id,role_scope:historical.map(role=>({...role,permissionCodes:[...role.permissionCodes]})),high_risk:high}),

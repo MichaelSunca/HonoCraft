@@ -66,5 +66,5 @@ export function requireRecentAuthentication(at: Date | null, now: Date): void {
   if (!Number.isFinite(age) || age < 0 || age >= 300_000) throw new AppError('REAUTH_REQUIRED');
 }
 export function assertSelfManagementAllowed(actorId: string, targetId: string): void {
-  if (actorId === targetId) throw new AppError('SELF_MANAGEMENT_FORBIDDEN');
+  if (actorId.toLowerCase() === targetId.toLowerCase()) throw new AppError('SELF_MANAGEMENT_FORBIDDEN');
 }

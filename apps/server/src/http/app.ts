@@ -42,6 +42,7 @@ import {createRoleQueries} from '../modules/access/queries.js';
 import {createRoleManagement} from '../modules/access/role-management.js';
 import {createPermissionQueries} from '../modules/access/permission-queries.js';
 import {InvitationActionSchema} from '@honocraft/contracts/invitations';
+import {createOperationQueries} from '../modules/operations/queries.js';
 
 type HttpEnvironment={Variables:{requestId:string;meta:RequestMeta;startedAt:number}};
 export type AppDependencies={webRoot?:string;pool:Pool;config:AppConfig;passwords:PasswordService;secrets:{epoch:string;csrfKey:Buffer;digestKey:DigestKey;mailKeyring:Keyring}};
@@ -60,6 +61,7 @@ export function createHttpApp({pool,config,passwords,secrets,webRoot}:AppDepende
   const media=createMediaService(pool,secrets,config.fileStorageRoot);
   const roleManagement=createRoleManagement(pool,secrets);
   const permissionQueries=createPermissionQueries(pool,secrets.epoch);
+  const operationQuery=createOperationQueries(pool,secrets,config.exampleNotesEnabled);
   const login=createLoginService(pool,{epoch:secrets.epoch,digestKey:secrets.digestKey.key},passwords);
   const mutate=createMutationGateway(pool,secrets,{'me.profile.update':profileMutation,'auth.logout':logoutMutation});
   const sessions=createSessionManagement(pool,secrets),accountSecurity=createAccountSecurity(pool,secrets,passwords);
@@ -142,6 +144,7 @@ export function createHttpApp({pool,config,passwords,secrets,webRoot}:AppDepende
     return c.json({data:{authenticated:true},request_id:c.get('requestId')});
   });
   app.get('/api/v1/invites',async c=>c.json({data:await invitationQueries.list(actorRef(c),c.req.query()),request_id:c.get('requestId')}));
+  app.get('/api/v1/operations/:operation/:key',async c=>c.json({data:await operationQuery(actorRef(c),c.req.param('operation'),c.req.param('key'),c.req.query()),request_id:c.get('requestId')}));
   app.get('/api/v1/permissions',async c=>c.json({data:await permissionQueries.list(actorRef(c),c.req.query()),request_id:c.get('requestId')}));
   app.get('/api/v1/settings',async c=>c.json({data:await settingsManagement.read(actorRef(c),c.req.query()),request_id:c.get('requestId')}));
   if(config.exampleNotesEnabled)app.route(exampleNotesModule.apiBase,createNotesRoutes(createNotesService(pool,secrets),config));

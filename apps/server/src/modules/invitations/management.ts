@@ -29,11 +29,15 @@ async function inviteAt(tx:Tx,id:string,lock=false){
 }
 async function roleIdsAt(tx:Tx,id:string){return (await tx.query<{role_id_at_issue:string}>('SELECT role_id_at_issue FROM invite_roles WHERE invite_id=$1 ORDER BY role_id_at_issue',[id])).rows.map(row=>row.role_id_at_issue);}
 export function invitationHighRisk(roles:RoleSnapshot[]){return roles.some(role=>!role.isDelegable||['admin','super_admin'].includes(role.code)||role.permissionCodes.some(code=>permissionDefinitions.find(item=>item.code===code)?.reserved));}
-async function authorizeScope(tx:Tx,context:SessionContext,ids:string[],forcedHigh=false):Promise<Scope>{
+async function authorizeScope(tx:Tx,context:SessionContext,ids:string[],forcedHigh=false,recent=true):Promise<Scope>{
   const roles=await readRoleSnapshots(tx,ids);if(!ids.length||roles.length!==ids.length)throw new AppError('VALIDATION_ERROR');
   assertGrantableRoles(context.actor,roles);const high=forcedHigh||invitationHighRisk(roles);
-  if(high){if(!isSuperAdmin(context.actor)||!context.permissions.has('user:manage-privileged'))throw new AppError('FORBIDDEN');requireRecentAuthentication(context.reauthenticatedAt,await databaseNow(tx));}
+  if(high){if(!isSuperAdmin(context.actor)||!context.permissions.has('user:manage-privileged'))throw new AppError('FORBIDDEN');if(recent)requireRecentAuthentication(context.reauthenticatedAt,await databaseNow(tx));}
   return {roles,high};
+}
+export async function authorizeInvitationOperationResult(tx:Tx,context:SessionContext,raw:unknown){
+  const stored=StoredPolicy.parse(raw);await inviteAt(tx,stored.id);
+  await authorizeScope(tx,context,stored.role_ids,stored.high_risk,false);return stored.id;
 }
 function confirmTarget(confirmation:{target_id?:string|undefined;target_email?:string|undefined;typed_label?:string|undefined}|undefined,id:string|null,email:string,high:boolean){
   if(!confirmation){if(high)throw new AppError('VALIDATION_ERROR');return;}
